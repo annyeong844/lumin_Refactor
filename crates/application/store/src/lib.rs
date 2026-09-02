@@ -145,7 +145,7 @@ pub struct RepositoryStore {
     namespace: namespace::NamespaceState,
 }
 
-#[cfg(feature = "namespace-test-crash")]
+#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
 pub fn state_entry_physical_identity_for_test(
     path: &Path,
 ) -> Result<PhysicalFileIdentity, StoreError> {
@@ -172,7 +172,8 @@ pub fn state_entry_physical_identity_for_test(
 #[cfg(any(
     test,
     feature = "lifecycle-migration-test-fault",
-    feature = "namespace-test-crash"
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
 ))]
 impl RepositoryStore {
     #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
@@ -211,7 +212,7 @@ impl RepositoryStore {
         self.namespace.remove_cache_eviction_binding_for_test()
     }
 
-    #[cfg(feature = "namespace-test-crash")]
+    #[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
     pub fn current_logical_snapshot_for_test(&self) -> Result<Vec<u8>, StoreError> {
         self.with_shared_lock(namespace::current_logical_snapshot_for_test)
     }

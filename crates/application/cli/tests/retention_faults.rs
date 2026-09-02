@@ -1,9 +1,11 @@
+#[path = "support/retention_plan.rs"]
+mod retention_plan_support;
 #[path = "support/retention.rs"]
 mod retention_support;
 #[path = "retention_faults/support.rs"]
 mod support;
 
-use support::{DurableState, Fixture, assert_status, run, run_with_crash};
+use support::{DurableState, Fixture, LatestProtectionFixture, assert_status, run, run_with_crash};
 
 #[test]
 fn plan_commit_death_leaves_no_partial_plan_or_operation() -> Result<(), Box<dyn std::error::Error>>
@@ -22,6 +24,36 @@ fn plan_commit_death_leaves_no_partial_plan_or_operation() -> Result<(), Box<dyn
     assert_status(&prepared, 0);
     let fixture = fixture.with_plan(&prepared.stdout)?;
     fixture.assert_state(DurableState::Prepared)?;
+    Ok(())
+}
+
+#[test]
+fn latest_protection_recovers_stale_confirmation_commit_death()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (point, stale_committed) in [("before-stale-commit", false), ("after-stale-commit", true)] {
+        println!("latest-protection crash point: {point}");
+        let fixture = LatestProtectionFixture::new()?;
+        let before = fixture.logical_snapshot()?;
+        fixture.crash_confirm(point)?;
+        fixture.assert_protected_truth()?;
+
+        let after_crash = fixture.logical_snapshot()?;
+        if stale_committed {
+            fixture.assert_only_stale_operation_delta(&before, &after_crash)?;
+            fixture.assert_stale_operation()?;
+        } else {
+            assert_eq!(after_crash, before);
+            fixture.assert_confirmation_operation_absent()?;
+        }
+
+        fixture.retry_and_assert_stale()?;
+        fixture.assert_protected_truth()?;
+        let recovered = fixture.logical_snapshot()?;
+        fixture.assert_only_stale_operation_delta(&before, &recovered)?;
+        if stale_committed {
+            assert_eq!(recovered, after_crash);
+        }
+    }
     Ok(())
 }
 

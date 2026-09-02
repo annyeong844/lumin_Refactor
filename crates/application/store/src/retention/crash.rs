@@ -4,6 +4,8 @@ const INVALID_SELECTOR_EXIT_CODE: i32 = 94;
 
 pub(super) enum RetentionCrashPoint {
     BeforePreparedCommit,
+    BeforeStaleCommit,
+    AfterStaleCommit,
     BeforePruningCommit,
     AfterPruningCommit,
     PayloadMoved(usize),
@@ -54,6 +56,8 @@ impl RetentionCrashPoint {
     fn label(&self) -> String {
         match self {
             Self::BeforePreparedCommit => "before-prepared-commit".to_owned(),
+            Self::BeforeStaleCommit => "before-stale-commit".to_owned(),
+            Self::AfterStaleCommit => "after-stale-commit".to_owned(),
             Self::BeforePruningCommit => "before-pruning-commit".to_owned(),
             Self::AfterPruningCommit => "after-pruning-commit".to_owned(),
             Self::PayloadMoved(index) => format!("after-payload-move-{index}"),
@@ -72,6 +76,8 @@ fn valid_selector(value: &str) -> bool {
     matches!(
         value,
         "before-prepared-commit"
+            | "before-stale-commit"
+            | "after-stale-commit"
             | "before-pruning-commit"
             | "after-pruning-commit"
             | "after-moves-committed"

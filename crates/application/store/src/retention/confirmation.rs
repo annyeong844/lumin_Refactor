@@ -120,7 +120,11 @@ pub(super) fn admit_or_resume(
             },
         };
         write_retention_operation(&write, &operation)?;
+        #[cfg(feature = "retention-test-crash")]
+        super::crash::hit(super::crash::RetentionCrashPoint::BeforeStaleCommit);
         guard.commit(write)?;
+        #[cfg(feature = "retention-test-crash")]
+        super::crash::hit(super::crash::RetentionCrashPoint::AfterStaleCommit);
         return Ok(result);
     }
 

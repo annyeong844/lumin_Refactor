@@ -1,11 +1,12 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 #[path = "../support/mod.rs"]
 mod process;
 
+use crate::retention_plan_support::contains_exclusion;
 use crate::retention_support::{audit, json};
 
 pub use process::{assert_status, field, run};
@@ -378,6 +379,467 @@ impl Fixture {
         assert_eq!(run_ids(&json(&output.stdout)?)?, [retained]);
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TreeEntryKind {
+    Directory,
+    File(Vec<u8>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TreeEntry {
+    relative_path: PathBuf,
+    physical_identity: lumin_model::PhysicalFileIdentity,
+    kind: TreeEntryKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LatestPhysicalSnapshot {
+    latest_identity: lumin_model::PhysicalFileIdentity,
+    latest: Vec<u8>,
+    attempts_identity: lumin_model::PhysicalFileIdentity,
+    attempts: Vec<TreeEntry>,
+    runs_identity: lumin_model::PhysicalFileIdentity,
+    runs: Vec<TreeEntry>,
+    trash_identity: lumin_model::PhysicalFileIdentity,
+    trash: Vec<TreeEntry>,
+}
+
+impl LatestPhysicalSnapshot {
+    fn capture(root: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let state = root.join(".lumin");
+        let latest = state.join("latest.json");
+        let attempts = state.join("attempts");
+        let runs = state.join("runs");
+        let trash = state.join("trash");
+        Ok(Self {
+            latest_identity: lumin_engine::state_entry_physical_identity_for_test(&latest)?,
+            latest: fs::read(latest)?,
+            attempts_identity: lumin_engine::state_entry_physical_identity_for_test(&attempts)?,
+            attempts: tree_snapshot(&attempts)?,
+            runs_identity: lumin_engine::state_entry_physical_identity_for_test(&runs)?,
+            runs: tree_snapshot(&runs)?,
+            trash_identity: lumin_engine::state_entry_physical_identity_for_test(&trash)?,
+            trash: tree_snapshot(&trash)?,
+        })
+    }
+}
+
+struct LatestProtectedTruth {
+    plan: String,
+    overview: String,
+    completed_run: String,
+    runs: String,
+    physical: LatestPhysicalSnapshot,
+}
+
+pub struct LatestProtectionFixture {
+    root: tempfile::TempDir,
+    plan_id: String,
+    failed_attempt: String,
+    completed_attempt: String,
+    completed_run: String,
+    newest_attempt: String,
+    newest_run: String,
+    protected: LatestProtectedTruth,
+}
+
+impl LatestProtectionFixture {
+    const PLAN_OPERATION_ID: &'static str = "retention-latest-crash-plan";
+    const CONFIRM_OPERATION_ID: &'static str = "retention-latest-crash-confirm";
+
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("lib.ts"), "export const first = 1;\n")?;
+        let completed_run = audit(root.path())?;
+        let completed_overview = successful_json(root.path(), &["overview"])?;
+        let completed_attempt = required_string(&completed_overview, "/latestAttempt/attemptId")?;
+
+        fs::write(root.path().join("lumin.json"), b"{\n")?;
+        let failed = run(root.path(), &["audit", "--jobs", "1"])?;
+        assert_status(&failed, 1);
+        let failed_overview = successful_json(root.path(), &["overview"])?;
+        let failed_attempt = required_string(&failed_overview, "/latestAttempt/attemptId")?;
+        assert_eq!(
+            failed_overview
+                .pointer("/latestAttempt/status")
+                .and_then(Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            failed_overview.pointer("/scope/id").and_then(Value::as_str),
+            Some(completed_run.as_str())
+        );
+
+        let prepared = run(root.path(), &Self::plan_arguments())?;
+        assert_status(&prepared, 0);
+        let plan_id = required_string(&json(&prepared.stdout)?, "/result/planId")?;
+        let initial_plan =
+            successful_output(root.path(), &["runs", "prune", "plan", "show", &plan_id])?;
+        assert_latest_exclusions(
+            &initial_plan,
+            &failed_attempt,
+            &completed_attempt,
+            &completed_run,
+        )?;
+
+        fs::remove_file(root.path().join("lumin.json"))?;
+        fs::write(root.path().join("lib.ts"), "export const newest = 2;\n")?;
+        let newest_run = audit(root.path())?;
+        let overview = successful_output(root.path(), &["overview"])?;
+        let overview_body = json(&overview)?;
+        let newest_attempt = required_string(&overview_body, "/latestAttempt/attemptId")?;
+        assert_eq!(
+            overview_body.pointer("/scope/id").and_then(Value::as_str),
+            Some(newest_run.as_str())
+        );
+
+        let plan = successful_output(root.path(), &["runs", "prune", "plan", "show", &plan_id])?;
+        assert_eq!(plan, initial_plan);
+        let completed_lookup =
+            successful_output(root.path(), &["overview", "--run", completed_run.as_str()])?;
+        let runs = successful_output(root.path(), &["runs", "list"])?;
+        let physical = LatestPhysicalSnapshot::capture(root.path())?;
+
+        let fixture = Self {
+            root,
+            plan_id,
+            failed_attempt,
+            completed_attempt,
+            completed_run,
+            newest_attempt,
+            newest_run,
+            protected: LatestProtectedTruth {
+                plan,
+                overview,
+                completed_run: completed_lookup,
+                runs,
+                physical,
+            },
+        };
+        fixture.assert_confirmation_operation_absent()?;
+        fixture.assert_protected_truth()?;
+        Ok(fixture)
+    }
+
+    pub fn crash_confirm(&self, point: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_with_crash(self.root(), &self.confirm_arguments(), point)?;
+        assert_status(&output, CRASH_EXIT_CODE);
+        Ok(())
+    }
+
+    pub fn logical_snapshot(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        let bytes = lumin_engine::current_logical_store_snapshot_for_test(self.root())?;
+        serde_json::from_slice(&bytes).map_err(Into::into)
+    }
+
+    pub fn assert_protected_truth(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let plan = successful_output(
+            self.root(),
+            &["runs", "prune", "plan", "show", &self.plan_id],
+        )?;
+        assert_eq!(plan, self.protected.plan);
+        assert_latest_exclusions(
+            &plan,
+            &self.failed_attempt,
+            &self.completed_attempt,
+            &self.completed_run,
+        )?;
+
+        let overview = successful_output(self.root(), &["overview"])?;
+        assert_eq!(overview, self.protected.overview);
+        let overview_body = json(&overview)?;
+        assert_eq!(
+            overview_body
+                .pointer("/latestAttempt/attemptId")
+                .and_then(Value::as_str),
+            Some(self.newest_attempt.as_str())
+        );
+        assert_eq!(
+            overview_body.pointer("/scope/id").and_then(Value::as_str),
+            Some(self.newest_run.as_str())
+        );
+
+        let completed = successful_output(
+            self.root(),
+            &["overview", "--run", self.completed_run.as_str()],
+        )?;
+        assert_eq!(completed, self.protected.completed_run);
+        let runs = successful_output(self.root(), &["runs", "list"])?;
+        assert_eq!(runs, self.protected.runs);
+        assert_eq!(
+            LatestPhysicalSnapshot::capture(self.root())?,
+            self.protected.physical
+        );
+        assert!(
+            !self
+                .root()
+                .join(".lumin/trash")
+                .join(&self.plan_id)
+                .exists()
+        );
+        Ok(())
+    }
+
+    pub fn assert_confirmation_operation_absent(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let operation = run(
+            self.root(),
+            &["operation", "show", Self::CONFIRM_OPERATION_ID],
+        )?;
+        assert_status(&operation, 2);
+        Ok(())
+    }
+
+    pub fn assert_stale_operation(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let operation = successful_output(
+            self.root(),
+            &["operation", "show", Self::CONFIRM_OPERATION_ID],
+        )?;
+        let body = json(&operation)?;
+        assert_eq!(
+            body.pointer("/operation/status").and_then(Value::as_str),
+            Some("stale")
+        );
+        assert_eq!(
+            body.pointer("/operation/result/result/planId")
+                .and_then(Value::as_str),
+            Some(self.plan_id.as_str())
+        );
+        assert_changed_inputs(&body, "/operation/result/result/changedInputs")?;
+        Ok(operation)
+    }
+
+    pub fn retry_and_assert_stale(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let stale = run(self.root(), &self.confirm_arguments())?;
+        assert_status(&stale, 5);
+        let body = json(&stale.stdout)?;
+        assert_eq!(
+            body.pointer("/result/status").and_then(Value::as_str),
+            Some("stale")
+        );
+        assert_eq!(
+            body.pointer("/result/planId").and_then(Value::as_str),
+            Some(self.plan_id.as_str())
+        );
+        assert_changed_inputs(&body, "/result/changedInputs")?;
+
+        let operation = self.assert_stale_operation()?;
+        let logical = self.logical_snapshot()?;
+        let retry = run(self.root(), &self.confirm_arguments())?;
+        assert_status(&retry, 5);
+        assert_eq!(retry.stdout, stale.stdout);
+        assert_eq!(retry.stderr, stale.stderr);
+        assert_eq!(self.assert_stale_operation()?, operation);
+        assert_eq!(self.logical_snapshot()?, logical);
+        Ok(())
+    }
+
+    pub fn assert_only_stale_operation_delta(
+        &self,
+        before: &Value,
+        after: &Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let before_operations = before
+            .get("retention_operations")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                std::io::Error::other("logical snapshot omitted retention operations")
+            })?;
+        assert!(!before_operations.contains_key(Self::CONFIRM_OPERATION_ID));
+
+        let mut without_stale = after.clone();
+        let after_operations = without_stale
+            .get_mut("retention_operations")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| {
+                std::io::Error::other("logical snapshot omitted retention operations")
+            })?;
+        let encoded = after_operations
+            .remove(Self::CONFIRM_OPERATION_ID)
+            .ok_or_else(|| {
+                std::io::Error::other("stale confirmation operation was not committed")
+            })?;
+        assert_eq!(&without_stale, before);
+
+        let bytes = encoded
+            .as_array()
+            .ok_or_else(|| std::io::Error::other("retention operation snapshot is not bytes"))?
+            .iter()
+            .map(|byte| {
+                byte.as_u64()
+                    .and_then(|byte| u8::try_from(byte).ok())
+                    .ok_or_else(|| std::io::Error::other("retention operation byte is invalid"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let operation: Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(
+            operation.get("operationId").and_then(Value::as_str),
+            Some(Self::CONFIRM_OPERATION_ID)
+        );
+        assert_eq!(
+            operation.get("status").and_then(Value::as_str),
+            Some("stale")
+        );
+        assert_eq!(
+            operation.get("planId").and_then(Value::as_str),
+            Some(self.plan_id.as_str())
+        );
+        assert_changed_inputs(&operation, "/result/result/changedInputs")
+    }
+
+    fn root(&self) -> &Path {
+        self.root.path()
+    }
+
+    fn plan_arguments() -> [&'static str; 7] {
+        [
+            "runs",
+            "prune",
+            "plan",
+            "--before",
+            CUTOFF,
+            "--operation-id",
+            Self::PLAN_OPERATION_ID,
+        ]
+    }
+
+    fn confirm_arguments(&self) -> [&str; 6] {
+        [
+            "runs",
+            "prune",
+            "confirm",
+            &self.plan_id,
+            "--operation-id",
+            Self::CONFIRM_OPERATION_ID,
+        ]
+    }
+}
+
+fn successful_output(
+    root: &Path,
+    arguments: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let output = run(root, arguments)?;
+    assert_status(&output, 0);
+    Ok(output.stdout)
+}
+
+fn successful_json(root: &Path, arguments: &[&str]) -> Result<Value, Box<dyn std::error::Error>> {
+    Ok(json(&successful_output(root, arguments)?)?)
+}
+
+fn required_string(value: &Value, pointer: &str) -> Result<String, Box<dyn std::error::Error>> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| std::io::Error::other(format!("response omitted {pointer}")).into())
+}
+
+fn assert_latest_exclusions(
+    output: &str,
+    failed_attempt: &str,
+    completed_attempt: &str,
+    completed_run: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let body = json(output)?;
+    assert_eq!(body.get("state").and_then(Value::as_str), Some("prepared"));
+    assert!(
+        body.get("items")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+    );
+    assert_eq!(
+        body.get("exclusions")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(3)
+    );
+    assert!(contains_exclusion(
+        &body,
+        "attempt",
+        failed_attempt,
+        "latest-attempt"
+    ));
+    assert!(contains_exclusion(
+        &body,
+        "attempt",
+        completed_attempt,
+        "latest-completed"
+    ));
+    assert!(contains_exclusion(
+        &body,
+        "run",
+        completed_run,
+        "latest-completed"
+    ));
+    Ok(())
+}
+
+fn assert_changed_inputs(body: &Value, pointer: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let inputs = body
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other(format!("response omitted {pointer}")))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| std::io::Error::other("changed input is not a string"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(inputs, ["plan-items", "plan-exclusions"]);
+    Ok(())
+}
+
+fn tree_snapshot(root: &Path) -> Result<Vec<TreeEntry>, Box<dyn std::error::Error>> {
+    let mut entries = Vec::new();
+    collect_tree(root, root, &mut entries)?;
+    entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(entries)
+}
+
+fn collect_tree(
+    root: &Path,
+    directory: &Path,
+    entries: &mut Vec<TreeEntry>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut children = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+    children.sort_by_key(std::fs::DirEntry::file_name);
+    for child in children {
+        let path = child.path();
+        let relative_path = path.strip_prefix(root)?.to_path_buf();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(std::io::Error::other(format!(
+                "state snapshot encountered a link at {}",
+                path.display()
+            ))
+            .into());
+        }
+        if metadata.is_dir() {
+            entries.push(TreeEntry {
+                relative_path,
+                physical_identity: lumin_engine::state_entry_physical_identity_for_test(&path)?,
+                kind: TreeEntryKind::Directory,
+            });
+            collect_tree(root, &path, entries)?;
+        } else if metadata.is_file() {
+            entries.push(TreeEntry {
+                relative_path,
+                physical_identity: lumin_engine::state_entry_physical_identity_for_test(&path)?,
+                kind: TreeEntryKind::File(fs::read(&path)?),
+            });
+        } else {
+            return Err(std::io::Error::other(format!(
+                "state snapshot encountered an unsupported entry at {}",
+                path.display()
+            ))
+            .into());
+        }
+    }
+    Ok(())
 }
 
 pub fn run_with_crash(
