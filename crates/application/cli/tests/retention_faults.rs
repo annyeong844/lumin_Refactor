@@ -79,7 +79,7 @@ fn run_retention_recovers_every_physical_crash_boundary() -> Result<(), Box<dyn 
 fn gate_retention_recovers_logical_crash_boundaries() -> Result<(), Box<dyn std::error::Error>> {
     for (point, expected) in [
         ("before-pruning-commit", DurableState::Prepared),
-        ("after-pruning-commit", DurableState::Pruning),
+        ("after-pruning-commit", DurableState::PruningReadyToCommit),
         ("after-pruned-commit", DurableState::Pruned),
     ] {
         let fixture = Fixture::gate()?;
@@ -107,13 +107,21 @@ fn unknown_crash_selector_fails_before_retention_mutation() -> Result<(), Box<dy
 fn run_crash_points(physical_moves: usize) -> Vec<(String, DurableState)> {
     let mut points = vec![
         ("before-pruning-commit".to_owned(), DurableState::Prepared),
-        ("after-pruning-commit".to_owned(), DurableState::Pruning),
+        (
+            "after-pruning-commit".to_owned(),
+            DurableState::PruningMovingPayloads,
+        ),
     ];
-    points.extend(
-        (0..physical_moves)
-            .map(|index| (format!("after-payload-move-{index}"), DurableState::Pruning)),
-    );
-    points.push(("after-moves-committed".to_owned(), DurableState::Pruning));
+    points.extend((0..physical_moves).map(|index| {
+        (
+            format!("after-payload-move-{index}"),
+            DurableState::PruningMovingPayloads,
+        )
+    }));
+    points.push((
+        "after-moves-committed".to_owned(),
+        DurableState::PruningReadyToCommit,
+    ));
     points.push(("after-pruned-commit".to_owned(), DurableState::Pruned));
     points.extend(
         (0..physical_moves)

@@ -485,6 +485,12 @@ jobs:
             name: retention-latest-protection
             arguments: foundation --store-crash --row retention-latest-protection
           - os: ubuntu-24.04
+            name: retention-public-lookup
+            arguments: foundation --store-crash --row retention-public-lookup
+          - os: windows-2022
+            name: retention-public-lookup
+            arguments: foundation --store-crash --row retention-public-lookup
+          - os: ubuntu-24.04
             name: state-namespace-initialization
             arguments: foundation --store-crash --row state-namespace-initialization
           - os: windows-2022
