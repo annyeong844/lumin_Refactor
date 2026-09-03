@@ -14,16 +14,34 @@ fn help_agent_owns_the_recovery_workflow_without_creating_state()
     assert_status(&output, 0);
     assert!(output.stderr.is_empty());
     assert!(output.stdout.starts_with("Lumin agent workflow\n"));
-    assert!(
-        output
-            .stdout
-            .contains("lumin operation show <operation-id> --format json")
-    );
-    assert!(
-        output
-            .stdout
-            .contains("lumin cache clean --operation-id <operation-id> --format json")
-    );
+    for command in [
+        "lumin audit --jobs 1 --format json",
+        "lumin overview --format json",
+        "lumin findings --run <run-id> --area dead-code --format json",
+        "lumin explain --run <run-id> <finding-id> --format json",
+        "lumin pre-write --operation-id <operation-id> --path <repo-path> --format json",
+        "lumin post-write <gate-id> --operation-id <operation-id> --format json",
+        "lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json",
+        "lumin runs pin <run-id> --operation-id <operation-id> --reason <reason> --format json",
+        "lumin runs unpin <pin-id> --operation-id <operation-id> --format json",
+        "lumin runs prune plan --before <unix-millis> --operation-id <operation-id> --format json",
+        "lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json",
+        "lumin gate prune plan --terminal-before <unix-millis> --operation-id <operation-id> --format json",
+        "lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json",
+        "lumin cache clean --operation-id <operation-id> --format json",
+        "lumin operation show <operation-id> --format json",
+        "lumin store migrate --format json",
+    ] {
+        assert_eq!(
+            output
+                .stdout
+                .lines()
+                .filter(|line| line.trim() == command)
+                .count(),
+            1,
+            "help-agent command projection differs for {command}"
+        );
+    }
     assert!(output.stdout.contains("lumin.cache-cleanup-operation.v2"));
     assert!(
         output
@@ -35,7 +53,6 @@ fn help_agent_owns_the_recovery_workflow_without_creating_state()
             .stdout
             .contains("not-attempted, unknown, succeeded, or failed")
     );
-    assert!(output.stdout.contains("lumin store migrate --format json"));
     assert!(output.stdout.contains(
         "{\"schemaVersion\":\"lumin.lifecycle-store-migration.v1\",\"storeSchema\":\"lumin-lifecycle-store-header.v13\",\"status\":\"ready\"}",
     ));
@@ -71,7 +88,18 @@ fn help_agent_query_examples_execute_through_the_public_binary()
 
     let help = run(root.path(), &["help-agent"])?;
     assert_stage_status("help-agent", &help, 0);
-    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    let audit_line = help
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("lumin audit "))
+        .ok_or("help-agent omitted its audit command")?;
+    let audit_arguments = command_arguments(audit_line, "<run-id>", None);
+    let audit_refs = audit_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let audit = run(root.path(), &audit_refs)?;
     assert_stage_status("audit", &audit, 0);
     let run_id = support::field(&audit.stdout, "runId")?;
 

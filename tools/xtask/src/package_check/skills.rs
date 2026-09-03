@@ -2,19 +2,51 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
-use super::{
-    downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
-    expect_string, expect_success, locate_fixture_binary, parse_json, run_binary,
-    run_binary_with_broken_stdout, scratch_directory_for, validate_help_output,
-};
+use super::locate_fixture_binary;
+
+mod behavior;
 
 pub(super) const CODEX_SKILL: &str = "skills/codex/SKILL.md";
 const CLAUDE_SKILL: &str = "skills/claude-code/SKILL.md";
+const ADAPTER_PREFIX: &str = concat!(
+    "---\n",
+    "name: lumin\n",
+    "description: Use the packaged native Lumin CLI to audit repositories, query grounded evidence, and manage durable write-gate, retention, cache-cleanup, and lifecycle-store recovery workflows. Use when repository changes need Lumin evidence or authorization.\n",
+    "---\n",
+    "\n",
+    "# Lumin\n",
+    "\n",
+    "Run `lumin help-agent` from the repository root before choosing command syntax.\n",
+    "Treat that installed-binary output as the command and recovery contract.\n",
+    "\n",
+    "- Use only the packaged `lumin` binary and its public JSON responses.\n",
+);
+pub(super) const QUERY_WORKFLOW: &str = concat!(
+    "- Follow these public command templates exactly; they are checked projections\n",
+    "  of the installed binary's agent help, not a second command contract:\n",
+    "  1. `lumin audit --jobs 1 --format json`\n",
+    "  2. `lumin overview --format json`\n",
+    "  3. `lumin findings --run <run-id> --area dead-code --format json`\n",
+    "  4. `lumin explain --run <run-id> <finding-id> --format json`\n",
+);
+pub(super) const MUTATION_WORKFLOW: &str = concat!(
+    "- Generate and retain a unique operation ID before each command below. Retain\n",
+    "  every returned gate, run, plan, and pin ID needed by the next command:\n",
+    "  1. `lumin pre-write --operation-id <operation-id> --path <repo-path> --format json`\n",
+    "  2. `lumin post-write <gate-id> --operation-id <operation-id> --format json`\n",
+    "  3. `lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json`\n",
+    "  4. `lumin runs pin <run-id> --operation-id <operation-id> --reason <reason> --format json`\n",
+    "  5. `lumin runs unpin <pin-id> --operation-id <operation-id> --format json`\n",
+    "  6. `lumin runs prune plan --before <unix-millis> --operation-id <operation-id> --format json`\n",
+    "  7. `lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json`\n",
+    "  8. `lumin gate prune plan --terminal-before <unix-millis> --operation-id <operation-id> --format json`\n",
+    "  9. `lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json`\n",
+);
 pub(super) const MIGRATION_WORKFLOW: &str = concat!(
     "- When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:\n",
     "  1. Preserve the original public command and all arguments unchanged.\n",
     "  2. Run `lumin store migrate --format json` and no other migration command.\n",
-    "  3. Accept only the exact migration DTO printed by `lumin help-agent`.\n",
+    "  3. Accept only the exact migration DTO printed by the public agent help.\n",
     "  4. Retry the preserved original public command with the same arguments.\n",
 );
 pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
@@ -23,20 +55,90 @@ pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
     "  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.\n",
     "  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.\n",
     "  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.\n",
-    "  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by `lumin help-agent`; never mint a replacement ID.\n",
+    "  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by the public agent help; never mint a replacement ID.\n",
 );
+const ADAPTER_SUFFIX: &str = concat!(
+    "- Never read, edit, infer, or repair `.lumin` internals. Missing, failed, stale,\n",
+    "  unsupported, or truncated evidence is not clean evidence.\n",
+    "\n",
+    "Keep responses concise: cite concrete IDs and the public command result that\n",
+    "supports each recommendation.\n",
+);
+const HELP_AGENT_COMMAND: &str = "lumin help-agent";
+const AUDIT_COMMAND: &str = "lumin audit --jobs 1 --format json";
+const OVERVIEW_COMMAND: &str = "lumin overview --format json";
+const FINDINGS_COMMAND: &str = "lumin findings --run <run-id> --area dead-code --format json";
+const EXPLAIN_COMMAND: &str = "lumin explain --run <run-id> <finding-id> --format json";
+const PRE_WRITE_COMMAND: &str =
+    "lumin pre-write --operation-id <operation-id> --path <repo-path> --format json";
+const POST_WRITE_COMMAND: &str =
+    "lumin post-write <gate-id> --operation-id <operation-id> --format json";
+const GATE_ABANDON_COMMAND: &str = concat!(
+    "lumin gate abandon <gate-id> --operation-id <operation-id> ",
+    "--reason <reason> --format json",
+);
+const RUN_PIN_COMMAND: &str = concat!(
+    "lumin runs pin <run-id> --operation-id <operation-id> ",
+    "--reason <reason> --format json",
+);
+const RUN_UNPIN_COMMAND: &str =
+    "lumin runs unpin <pin-id> --operation-id <operation-id> --format json";
+const RUN_PRUNE_PLAN_COMMAND: &str = concat!(
+    "lumin runs prune plan --before <unix-millis> ",
+    "--operation-id <operation-id> --format json",
+);
+const RUN_PRUNE_CONFIRM_COMMAND: &str =
+    "lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json";
+const GATE_PRUNE_PLAN_COMMAND: &str = concat!(
+    "lumin gate prune plan --terminal-before <unix-millis> ",
+    "--operation-id <operation-id> --format json",
+);
+const GATE_PRUNE_CONFIRM_COMMAND: &str =
+    "lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json";
 const CACHE_CLEANUP_COMMAND: &str = "lumin cache clean --operation-id <operation-id> --format json";
 const OPERATION_SHOW_COMMAND: &str = "lumin operation show <operation-id> --format json";
-const MIGRATION_ARGUMENTS: &[&str] = &["store", "migrate", "--format", "json"];
+const MIGRATION_COMMAND: &str = "lumin store migrate --format json";
+const PUBLIC_COMMAND_TEMPLATES: &[&str] = &[
+    HELP_AGENT_COMMAND,
+    AUDIT_COMMAND,
+    OVERVIEW_COMMAND,
+    FINDINGS_COMMAND,
+    EXPLAIN_COMMAND,
+    PRE_WRITE_COMMAND,
+    POST_WRITE_COMMAND,
+    GATE_ABANDON_COMMAND,
+    RUN_PIN_COMMAND,
+    RUN_UNPIN_COMMAND,
+    RUN_PRUNE_PLAN_COMMAND,
+    RUN_PRUNE_CONFIRM_COMMAND,
+    GATE_PRUNE_PLAN_COMMAND,
+    GATE_PRUNE_CONFIRM_COMMAND,
+    CACHE_CLEANUP_COMMAND,
+    OPERATION_SHOW_COMMAND,
+    MIGRATION_COMMAND,
+];
+
+pub(super) fn canonical_adapter_source() -> String {
+    [
+        ADAPTER_PREFIX,
+        QUERY_WORKFLOW,
+        MUTATION_WORKFLOW,
+        OPERATION_RECOVERY_WORKFLOW,
+        MIGRATION_WORKFLOW,
+        ADAPTER_SUFFIX,
+    ]
+    .concat()
+}
+
 pub(super) fn check() -> Result<(), String> {
     let package = super::artifact::load_for_host()?;
     let package_root = &package.root;
     validate_skill_sources(package_root)?;
     let binary = &package.binary;
     let fixture_binary = locate_fixture_binary()?;
-    validate_binary_agent_contract(binary)?;
-    validate_packaged_adapter_migration_workflows(package_root, binary, &fixture_binary)?;
-    validate_packaged_adapter_operation_workflows(package_root, binary, &fixture_binary)?;
+    behavior::validate_binary_agent_contract(binary)?;
+    behavior::validate_packaged_adapter_migration_workflows(package_root, binary, &fixture_binary)?;
+    behavior::validate_packaged_adapter_operation_workflows(package_root, binary, &fixture_binary)?;
     Ok(())
 }
 
@@ -123,6 +225,23 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
             "{relative} must contain exactly one canonical operation recovery workflow"
         ));
     }
+    if source.matches(QUERY_WORKFLOW).count() != 1 {
+        return Err(format!(
+            "{relative} must contain exactly one canonical audit/query workflow"
+        ));
+    }
+    if source.matches(MUTATION_WORKFLOW).count() != 1 {
+        return Err(format!(
+            "{relative} must contain exactly one canonical mutation workflow"
+        ));
+    }
+    for command in PUBLIC_COMMAND_TEMPLATES {
+        if source.matches(&format!("`{command}`")).count() != 1 {
+            return Err(format!(
+                "{relative} must contain exactly one public command `{command}`"
+            ));
+        }
+    }
     for forbidden in [
         "schemaVersion",
         "lumin.lifecycle-store-migration",
@@ -138,6 +257,21 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
                 "{relative} embeds forbidden implementation detail: {forbidden}"
             ));
         }
+    }
+    let authored_commands = source
+        .split('`')
+        .enumerate()
+        .filter_map(|(index, text)| (index % 2 == 1 && text.starts_with("lumin ")).then_some(text))
+        .collect::<Vec<_>>();
+    if authored_commands != PUBLIC_COMMAND_TEMPLATES {
+        return Err(format!(
+            "{relative} public command sequence differs from the reviewed adapter contract"
+        ));
+    }
+    if source != canonical_adapter_source() {
+        return Err(format!(
+            "{relative} differs from the canonical thin-adapter source"
+        ));
     }
     Ok(())
 }
@@ -156,267 +290,4 @@ fn validate_skill_directory(package_root: &Path, relative: &str) -> Result<(), S
         ));
     }
     Ok(())
-}
-
-fn validate_binary_agent_contract(binary: &Path) -> Result<(), String> {
-    let scratch = scratch_directory_for("skills")?;
-    fs::create_dir(&scratch)
-        .map_err(|error| format!("cannot create package-check scratch directory: {error}"))?;
-    let result = expect_success(run_binary(binary, &scratch, &["help-agent"]), "help-agent")
-        .and_then(|output| validate_help_output(&output.stdout));
-    let created_state = scratch.join(".lumin").exists();
-    let cleanup = fs::remove_dir_all(&scratch)
-        .map_err(|error| format!("cannot remove package-check scratch directory: {error}"));
-    result?;
-    cleanup?;
-    if created_state {
-        return Err("packaged lumin help-agent created repository state".to_owned());
-    }
-    Ok(())
-}
-
-fn validate_packaged_adapter_migration_workflows(
-    package_root: &Path,
-    binary: &Path,
-    fixture_binary: &Path,
-) -> Result<(), String> {
-    let scratch = scratch_directory_for("skill-migration")?;
-    fs::create_dir(&scratch)
-        .map_err(|error| format!("cannot create skill migration scratch directory: {error}"))?;
-    let result = [(CODEX_SKILL, "codex"), (CLAUDE_SKILL, "claude-code")]
-        .into_iter()
-        .try_for_each(|(relative, name)| {
-            let source = read_skill(package_root, relative)?;
-            validate_adapter(relative, &source)?;
-            execute_adapter_migration_workflow(
-                relative,
-                binary,
-                fixture_binary,
-                &scratch.join(name),
-            )
-        });
-    let cleanup = fs::remove_dir_all(&scratch)
-        .map_err(|error| format!("cannot remove skill migration scratch directory: {error}"));
-    result?;
-    cleanup
-}
-
-fn execute_adapter_migration_workflow(
-    relative: &str,
-    binary: &Path,
-    fixture_binary: &Path,
-    root: &Path,
-) -> Result<(), String> {
-    fs::create_dir_all(root.join("src"))
-        .map_err(|error| format!("cannot create {relative} migration fixture: {error}"))?;
-    fs::write(
-        root.join("package.json"),
-        br#"{"name":"lumin-skill-migration","private":true,"type":"module"}"#,
-    )
-    .map_err(|error| format!("cannot write {relative} migration manifest: {error}"))?;
-    fs::write(
-        root.join("src/lib.ts"),
-        b"export const skillMigration = 1;\n",
-    )
-    .map_err(|error| format!("cannot write {relative} migration source: {error}"))?;
-
-    let audit = expect_success(
-        run_binary(binary, root, &["audit", "--jobs", "1", "--format", "json"]),
-        &format!("{relative} fixture audit"),
-    )?;
-    let audit_json = parse_json(&format!("{relative} fixture audit"), &audit.stdout)?;
-    let run_id = audit_json
-        .pointer("/runId")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("{relative} fixture audit omitted runId"))?
-        .to_owned();
-    downgrade_store_as_prior(fixture_binary, root, None)?;
-
-    let original_arguments = ["overview", "--format", "json"];
-    let blocked = run_binary(binary, root, &original_arguments)?;
-    expect_migration_required(&blocked, &format!("{relative} original command"))?;
-    expect_migration_ready(
-        binary,
-        root,
-        MIGRATION_ARGUMENTS,
-        &format!("{relative} migration command"),
-    )?;
-    let retried = expect_success(
-        run_binary(binary, root, &original_arguments),
-        &format!("{relative} unchanged original-command retry"),
-    )?;
-    let retried_json = parse_json(
-        &format!("{relative} unchanged original-command retry"),
-        &retried.stdout,
-    )?;
-    expect_string(&retried_json, "/schemaVersion", "lumin.overview.v2")?;
-    expect_string(&retried_json, "/scope/id", &run_id)?;
-    Ok(())
-}
-
-fn validate_packaged_adapter_operation_workflows(
-    package_root: &Path,
-    binary: &Path,
-    fixture_binary: &Path,
-) -> Result<(), String> {
-    let scratch = scratch_directory_for("skill-operation")?;
-    fs::create_dir(&scratch)
-        .map_err(|error| format!("cannot create skill operation scratch directory: {error}"))?;
-    let result = [(CODEX_SKILL, "codex"), (CLAUDE_SKILL, "claude-code")]
-        .into_iter()
-        .try_for_each(|(relative, name)| {
-            let source = read_skill(package_root, relative)?;
-            validate_adapter(relative, &source)?;
-            execute_adapter_operation_workflow(
-                relative,
-                name,
-                &source,
-                binary,
-                fixture_binary,
-                &scratch.join(name),
-            )
-        });
-    let cleanup = fs::remove_dir_all(&scratch)
-        .map_err(|error| format!("cannot remove skill operation scratch directory: {error}"));
-    result?;
-    cleanup
-}
-
-fn execute_adapter_operation_workflow(
-    relative: &str,
-    adapter_name: &str,
-    source: &str,
-    binary: &Path,
-    fixture_binary: &Path,
-    root: &Path,
-) -> Result<(), String> {
-    fs::create_dir_all(root.join("src"))
-        .map_err(|error| format!("cannot create {relative} operation fixture: {error}"))?;
-    fs::write(
-        root.join("src/lib.ts"),
-        b"export const skillOperation = 1;\n",
-    )
-    .map_err(|error| format!("cannot write {relative} operation source: {error}"))?;
-    expect_success(
-        run_binary(binary, root, &["audit", "--jobs", "1", "--format", "json"]),
-        &format!("{relative} operation fixture audit"),
-    )?;
-    let seeded = expect_success(
-        run_binary(
-            fixture_binary,
-            root,
-            &["cache", "test-write", "skill-payload.bin", adapter_name],
-        ),
-        &format!("{relative} cache fixture writer"),
-    )?;
-    if !seeded.stdout.is_empty() {
-        return Err(format!("{relative} cache fixture writer emitted stdout"));
-    }
-
-    let operation_id = format!("skill-{adapter_name}-cache-clean-0001");
-    let cleanup_arguments =
-        adapter_command_arguments(relative, source, CACHE_CLEANUP_COMMAND, &operation_id)?;
-    let cleanup_arguments = cleanup_arguments
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let show_arguments =
-        adapter_command_arguments(relative, source, OPERATION_SHOW_COMMAND, &operation_id)?;
-    let show_arguments = show_arguments
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let failed = run_binary_with_broken_stdout(binary, root, &cleanup_arguments)?;
-    expect_status(
-        &failed,
-        Some(1),
-        &format!("{relative} uncertain cleanup delivery"),
-    )?;
-    if !failed.stdout.is_empty() || !failed.stderr.is_empty() {
-        return Err(format!(
-            "{relative} BrokenPipe cleanup did not use the canonical empty transport"
-        ));
-    }
-
-    let shown = expect_success(
-        run_binary(binary, root, &show_arguments),
-        &format!("{relative} operation-show recovery"),
-    )?;
-    let response = parse_json(
-        &format!("{relative} operation-show recovery"),
-        &shown.stdout,
-    )?;
-    expect_string(
-        &response,
-        "/schemaVersion",
-        "lumin.cache-cleanup-operation.v2",
-    )?;
-    expect_string(&response, "/operationId", &operation_id)?;
-    expect_string(&response, "/kind", "cache-clean")?;
-    expect_string(&response, "/status", "committed")?;
-    expect_string(&response, "/lastDeliveryStatus", "failed")?;
-    expect_string(&response, "/result/operationId", &operation_id)?;
-    expect_string(&response, "/result/status", "clean")?;
-
-    let repeated_show = expect_success(
-        run_binary(binary, root, &show_arguments),
-        &format!("{relative} repeated operation-show recovery"),
-    )?;
-    if repeated_show.stdout != shown.stdout {
-        return Err(format!(
-            "{relative} read-only operation recovery changed the committed DTO"
-        ));
-    }
-    let active_names = fs::read_dir(root.join(".lumin/cache"))
-        .map_err(|error| format!("cannot inspect {relative} active cache: {error}"))?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("cannot inspect {relative} active cache: {error}"))?;
-    if active_names != [OsString::from("namespace.anchor")] {
-        return Err(format!(
-            "{relative} operation recovery left unexpected active-cache entries"
-        ));
-    }
-    Ok(())
-}
-
-fn adapter_command_arguments(
-    relative: &str,
-    source: &str,
-    command_template: &str,
-    operation_id: &str,
-) -> Result<Vec<String>, String> {
-    let marker = format!("`{command_template}`");
-    if source.matches(&marker).count() != 1 {
-        return Err(format!(
-            "{relative} must contain exactly one adapter command `{command_template}`"
-        ));
-    }
-    let start = source
-        .find(&marker)
-        .ok_or_else(|| format!("{relative} omitted adapter command `{command_template}`"))?;
-    let authored = &source[start + 1..start + marker.len() - 1];
-    let mut tokens = authored.split_ascii_whitespace();
-    if tokens.next() != Some("lumin") {
-        return Err(format!(
-            "{relative} adapter command does not invoke packaged lumin"
-        ));
-    }
-    let mut placeholder_count = 0_usize;
-    let arguments = tokens
-        .map(|token| {
-            if token == "<operation-id>" {
-                placeholder_count += 1;
-                operation_id.to_owned()
-            } else {
-                token.to_owned()
-            }
-        })
-        .collect::<Vec<_>>();
-    if placeholder_count != 1 {
-        return Err(format!(
-            "{relative} adapter command must contain exactly one operation-ID placeholder"
-        ));
-    }
-    Ok(arguments)
 }

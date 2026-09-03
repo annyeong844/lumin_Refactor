@@ -8,7 +8,7 @@ Read before acting
   machine result and stderr as diagnostics. Never read or modify .lumin.
 
 Audit and query
-  lumin audit --format json
+  lumin audit --jobs 1 --format json
   lumin overview --format json
   lumin findings --run <run-id> --area dead-code --format json
   lumin explain --run <run-id> <finding-id> --format json
@@ -24,9 +24,17 @@ Write gate
   An unavailable requested owner returns an incomplete gate; never substitute another lane.
   Apply edits only when the returned decision authorizes them, and retain the
   returned gateId.
-  lumin post-write <gate-id> --operation-id <new-operation-id> --format json
-  Use a new operation ID for abandon, pin, unpin, prune-plan creation,
-  prune confirmation, and cache cleanup as well.
+  lumin post-write <gate-id> --operation-id <operation-id> --format json
+  lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json
+
+Retention
+  Use a new operation ID for every command below.
+  lumin runs pin <run-id> --operation-id <operation-id> --reason <reason> --format json
+  lumin runs unpin <pin-id> --operation-id <operation-id> --format json
+  lumin runs prune plan --before <unix-millis> --operation-id <operation-id> --format json
+  lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json
+  lumin gate prune plan --terminal-before <unix-millis> --operation-id <operation-id> --format json
+  lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json
 
 Cache cleanup
   lumin cache clean --operation-id <operation-id> --format json
