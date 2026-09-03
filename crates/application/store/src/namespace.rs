@@ -40,6 +40,18 @@ pub(crate) fn current_logical_snapshot_for_test(
 ) -> Result<Vec<u8>, StoreError> {
     migration::current_logical_snapshot_for_test(guard)
 }
+
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
+pub(crate) fn complete_logical_observation_for_test(
+    guard: &NamespaceGuard,
+) -> Result<Vec<u8>, StoreError> {
+    migration::complete_logical_observation_for_test(guard)
+}
 use records::*;
 use store_header::*;
 

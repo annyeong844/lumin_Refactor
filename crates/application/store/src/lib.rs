@@ -227,6 +227,21 @@ impl RepositoryStore {
             .ok_or(StoreError::LifecycleStoreNotInitialized)?;
         namespace.with_observation_lock(namespace::current_logical_snapshot_for_test)
     }
+
+    #[cfg(any(
+        test,
+        feature = "logical-store-snapshot-test",
+        feature = "namespace-test-crash",
+        feature = "retention-test-crash"
+    ))]
+    pub fn complete_logical_observation_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Vec<u8>, StoreError> {
+        let namespace = namespace::NamespaceState::open_for_observation(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.with_observation_lock(namespace::complete_logical_observation_for_test)
+    }
 }
 
 #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]

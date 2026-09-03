@@ -161,7 +161,9 @@ fn namespace_snapshot(root: &Path) -> Result<NamespaceSnapshot, Box<dyn std::err
             &lifecycle_store_path,
         )?,
         lifecycle_store_size: fs::metadata(lifecycle_store)?.len(),
-        lifecycle_store_logical_bytes: lumin_engine::current_logical_store_snapshot_for_test(root)?,
+        lifecycle_store_logical_bytes: lumin_engine::complete_logical_store_observation_for_test(
+            root,
+        )?,
         other_entries,
     })
 }

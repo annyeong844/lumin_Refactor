@@ -1071,6 +1071,16 @@ pub fn current_logical_store_snapshot_for_test(root: &Path) -> Result<Vec<u8>, E
     .map_err(Into::into)
 }
 
+#[cfg(feature = "logical-store-snapshot-test")]
+pub fn complete_logical_store_observation_for_test(root: &Path) -> Result<Vec<u8>, EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::complete_logical_observation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )
+    .map_err(Into::into)
+}
+
 pub fn allocate_cache_cleanup_delivery(
     root: &Path,
     operation_id: &OperationId,

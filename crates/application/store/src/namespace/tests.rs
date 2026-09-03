@@ -27,11 +27,11 @@ fn logical_snapshot_observer_never_recovers_or_rewrites_the_store()
     let store_path = root.path().join(".lumin/lifecycle.store");
     let physical_before = fs::read(&store_path)?;
 
-    let first = RepositoryStore::current_logical_snapshot_for_test(
+    let first = RepositoryStore::complete_logical_observation_for_test(
         &admission.canonical_root,
         &admission.binding,
     )?;
-    let second = RepositoryStore::current_logical_snapshot_for_test(
+    let second = RepositoryStore::complete_logical_observation_for_test(
         &admission.canonical_root,
         &admission.binding,
     )?;
@@ -84,7 +84,7 @@ fn logical_snapshot_observer_never_recovers_or_rewrites_the_store()
         }
         guard.commit(write)
     })?;
-    let with_empty_table = RepositoryStore::current_logical_snapshot_for_test(
+    let with_empty_table = RepositoryStore::complete_logical_observation_for_test(
         &admission.canonical_root,
         &admission.binding,
     )?;
@@ -103,7 +103,7 @@ fn logical_snapshot_observer_never_recovers_or_rewrites_the_store()
         &admission.canonical_root,
         &admission.binding,
     )?);
-    let recovered = RepositoryStore::current_logical_snapshot_for_test(
+    let recovered = RepositoryStore::complete_logical_observation_for_test(
         &admission.canonical_root,
         &admission.binding,
     )?;
