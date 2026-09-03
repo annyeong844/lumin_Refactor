@@ -61,6 +61,21 @@ fn help_agent_owns_the_recovery_workflow_without_creating_state()
             .stdout
             .contains("not-attempted, unknown, succeeded, or failed")
     );
+    assert!(
+        output
+            .stdout
+            .contains("Operation show is read-only and never resumes work or changes liveness.")
+    );
+    assert!(
+        output.stdout.contains(
+            "gate and cache operations, consume result when status is committed; retry the"
+        )
+    );
+    assert!(
+        output.stdout.contains(
+            "committed or stale; retry the identical mutation with the same operation ID"
+        )
+    );
     assert!(output.stdout.contains(
         "{\"schemaVersion\":\"lumin.lifecycle-store-migration.v1\",\"storeSchema\":\"lumin-lifecycle-store-header.v13\",\"status\":\"ready\"}",
     ));
@@ -148,6 +163,36 @@ fn command_help_exposes_owned_syntax_without_creating_state()
         );
         assert!(!root.path().join(".lumin").exists());
     }
+    for command in ["audit", "pre-write"] {
+        let output = run(root.path(), &[command, "--help"])?;
+        assert_stage_status(&format!("{command} override help"), &output, 0);
+        for required in [
+            "<role>: test | production | generated | vendor | authored",
+            "<profile>: bundler | node | node10 | node16 | nodenext",
+        ] {
+            assert!(
+                output.stdout.lines().any(|line| line.trim() == required),
+                "{command} help omitted {required}: {}",
+                output.stdout
+            );
+        }
+    }
+    let operation = run(root.path(), &["operation", "--help"])?;
+    assert_stage_status("operation state help", &operation, 0);
+    for required in [
+        "Gate/cache committed: consume result without retrying the mutation.",
+        "Gate/cache pending or interrupted: retry the identical mutation with the same operation ID.",
+        "Retention committed or stale: consume result without retrying the mutation.",
+        "Retention pruning: retry the identical mutation with the same operation ID.",
+        "Operation show is read-only; repeated shows do not resume work or change liveness.",
+    ] {
+        assert!(
+            operation.stdout.lines().any(|line| line.trim() == required),
+            "operation help omitted {required}: {}",
+            operation.stdout
+        );
+    }
+    assert!(!root.path().join(".lumin").exists());
     Ok(())
 }
 

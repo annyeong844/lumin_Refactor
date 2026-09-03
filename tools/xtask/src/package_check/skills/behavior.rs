@@ -6,7 +6,7 @@ use std::path::Path;
 use super::super::{
     downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
     expect_string, expect_success, parse_json, run_binary, run_binary_with_broken_stdout,
-    scratch_directory_for, validate_help_output,
+    run_binary_with_env, scratch_directory_for, validate_help_output,
 };
 use super::{CLAUDE_SKILL, CODEX_SKILL, read_skill, validate_adapter};
 
@@ -106,6 +106,34 @@ impl AgentHelp {
             }
             commands.insert(*action, matches[0].to_owned());
         }
+        for action in [AdapterAction::Audit, AdapterAction::PreWrite] {
+            let command_help_arguments =
+                command_help_bootstrap_arguments(relative, source, action)?;
+            let command_help = expect_success(
+                run_adapter_command(binary, root, &command_help_arguments),
+                &format!(
+                    "{relative} installed {} command help",
+                    action.selector().join(" ")
+                ),
+            )?;
+            let command_help = String::from_utf8(command_help.stdout).map_err(|error| {
+                format!(
+                    "{relative} installed {} help is not UTF-8: {error}",
+                    action.selector().join(" ")
+                )
+            })?;
+            for required in [
+                "<role>: test | production | generated | vendor | authored",
+                "<profile>: bundler | node | node10 | node16 | nodenext",
+            ] {
+                if !command_help.lines().any(|line| line.trim() == required) {
+                    return Err(format!(
+                        "{relative} installed {} help omitted `{required}`",
+                        action.selector().join(" ")
+                    ));
+                }
+            }
+        }
         let operation_help_arguments =
             command_help_bootstrap_arguments(relative, source, AdapterAction::OperationShow)?;
         let operation_help = expect_success(
@@ -115,6 +143,19 @@ impl AgentHelp {
         let operation_help = String::from_utf8(operation_help.stdout).map_err(|error| {
             format!("{relative} installed operation help is not UTF-8: {error}")
         })?;
+        for required in [
+            "Gate/cache committed: consume result without retrying the mutation.",
+            "Gate/cache pending or interrupted: retry the identical mutation with the same operation ID.",
+            "Retention committed or stale: consume result without retrying the mutation.",
+            "Retention pruning: retry the identical mutation with the same operation ID.",
+            "Operation show is read-only; repeated shows do not resume work or change liveness.",
+        ] {
+            if !operation_help.lines().any(|line| line.trim() == required) {
+                return Err(format!(
+                    "{relative} installed operation help omitted `{required}`"
+                ));
+            }
+        }
         let option_prefixed_operation_show = operation_help
             .lines()
             .map(str::trim)
@@ -675,6 +716,7 @@ fn execute_adapter_operation_workflow(
     let gate_plan_id = operation_id(adapter_name, "gate-prune-plan");
     let gate_confirm_id = operation_id(adapter_name, "gate-prune-confirm");
     let cleanup_id = format!("--{}", operation_id(adapter_name, "cache-clean"));
+    let resumed_cleanup_id = format!("--{}", operation_id(adapter_name, "cache-resume"));
     require_unique_operation_ids(
         relative,
         [
@@ -689,6 +731,7 @@ fn execute_adapter_operation_workflow(
             gate_plan_id.as_str(),
             gate_confirm_id.as_str(),
             cleanup_id.as_str(),
+            resumed_cleanup_id.as_str(),
         ],
     )?;
 
@@ -985,6 +1028,135 @@ fn execute_adapter_operation_workflow(
     if active_names != [OsString::from("namespace.anchor")] {
         return Err(format!(
             "{relative} operation recovery left unexpected active-cache entries"
+        ));
+    }
+    validate_unfinished_cleanup_recovery(
+        relative,
+        adapter_name,
+        &help,
+        binary,
+        fixture_binary,
+        root,
+        &resumed_cleanup_id,
+    )?;
+    Ok(())
+}
+
+fn validate_unfinished_cleanup_recovery(
+    relative: &str,
+    adapter_name: &str,
+    help: &AgentHelp,
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+    operation_id: &str,
+) -> Result<(), String> {
+    let seeded = expect_success(
+        run_binary(
+            fixture_binary,
+            root,
+            &[
+                "cache",
+                "test-write",
+                "skill-resume-payload.bin",
+                adapter_name,
+            ],
+        ),
+        &format!("{relative} unfinished cache fixture writer"),
+    )?;
+    if !seeded.stdout.is_empty() {
+        return Err(format!(
+            "{relative} unfinished cache fixture writer emitted stdout"
+        ));
+    }
+
+    let cleanup_arguments = help.command_arguments(
+        relative,
+        AdapterAction::CacheCleanup,
+        &[("<operation-id>", operation_id)],
+    )?;
+    let cleanup_argument_refs = command_argument_refs(&cleanup_arguments);
+    let crashed = run_binary_with_env(
+        fixture_binary,
+        root,
+        &cleanup_argument_refs,
+        &[(
+            "LUMIN_TEST_CACHE_CLEANUP_CRASH_POINT",
+            "after-authorization",
+        )],
+    )?;
+    expect_status(
+        &crashed,
+        Some(95),
+        &format!("{relative} unfinished cache cleanup fixture"),
+    )?;
+    if !crashed.stdout.is_empty() || !crashed.stderr.is_empty() {
+        return Err(format!(
+            "{relative} unfinished cache cleanup crash emitted output"
+        ));
+    }
+
+    let show_arguments = help.operation_show_arguments(relative, operation_id)?;
+    let first_show = expect_success(
+        run_adapter_command(binary, root, &show_arguments),
+        &format!("{relative} pending cache cleanup operation show"),
+    )?;
+    let pending = parse_json(
+        &format!("{relative} pending cache cleanup operation show"),
+        &first_show.stdout,
+    )?;
+    expect_string(
+        &pending,
+        "/schemaVersion",
+        "lumin.cache-cleanup-operation.v2",
+    )?;
+    expect_string(&pending, "/operationId", operation_id)?;
+    expect_string(&pending, "/kind", "cache-clean")?;
+    expect_string(&pending, "/status", "pending")?;
+    if pending.get("result").is_none_or(|result| !result.is_null()) {
+        return Err(format!("{relative} pending cache cleanup exposed a result"));
+    }
+
+    let repeated_show = expect_success(
+        run_adapter_command(binary, root, &show_arguments),
+        &format!("{relative} repeated pending cache cleanup operation show"),
+    )?;
+    if repeated_show.stdout != first_show.stdout {
+        return Err(format!(
+            "{relative} read-only operation show changed pending cleanup state"
+        ));
+    }
+
+    let recovered = expect_success(
+        run_adapter_command(binary, root, &cleanup_arguments),
+        &format!("{relative} identical pending cache cleanup retry"),
+    )?;
+    let recovered = parse_json(
+        &format!("{relative} identical pending cache cleanup retry"),
+        &recovered.stdout,
+    )?;
+    expect_string(&recovered, "/schemaVersion", "lumin.cache-cleanup.v2")?;
+    expect_string(&recovered, "/operationId", operation_id)?;
+    expect_string(&recovered, "/status", "clean")?;
+
+    let committed = expect_success(
+        run_adapter_command(binary, root, &show_arguments),
+        &format!("{relative} committed cache cleanup operation show"),
+    )?;
+    let committed = parse_json(
+        &format!("{relative} committed cache cleanup operation show"),
+        &committed.stdout,
+    )?;
+    expect_string(&committed, "/status", "committed")?;
+    expect_string(&committed, "/result/operationId", operation_id)?;
+    expect_string(&committed, "/result/status", "clean")?;
+    if committed
+        .get("interruptionCount")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err(format!(
+            "{relative} identical cleanup retry did not record one interrupted execution"
         ));
     }
     Ok(())

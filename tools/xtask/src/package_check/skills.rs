@@ -51,10 +51,12 @@ pub(super) const MIGRATION_WORKFLOW: &str = concat!(
 );
 pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
     "- If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.\n",
-    "- For uncertain cache-cleanup delivery, preserve the exact original request and\n",
-    "  query operation show with that operation ID before any retry. Consume a\n",
-    "  matching committed result without rerunning cleanup; otherwise resume only as\n",
-    "  instructed by installed help, with the same ID and no replacement ID.\n",
+    "- Query operation show with that operation ID before any retry. It is read-only:\n",
+    "  repeated shows never resume work or change liveness. For gate and cache\n",
+    "  operations, consume a `committed` result; retry the identical mutation with the\n",
+    "  same ID for `pending` or `interrupted`. For retention operations, consume a\n",
+    "  `committed` or `stale` result; retry the identical mutation with the same ID\n",
+    "  for `pruning`. Never wait for show alone to change an unfinished state.\n",
 );
 const ADAPTER_SUFFIX: &str = concat!(
     "- Never read, edit, infer, or repair `.lumin` internals. Missing, failed, stale,\n",

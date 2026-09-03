@@ -27,10 +27,12 @@ command-syntax and DTO authority.
 - For retention, pin and unpin by returned IDs. Create a plan before confirming
   run or terminal-gate pruning, and confirm only the exact returned plan ID.
 - If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.
-- For uncertain cache-cleanup delivery, preserve the exact original request and
-  query operation show with that operation ID before any retry. Consume a
-  matching committed result without rerunning cleanup; otherwise resume only as
-  instructed by installed help, with the same ID and no replacement ID.
+- Query operation show with that operation ID before any retry. It is read-only:
+  repeated shows never resume work or change liveness. For gate and cache
+  operations, consume a `committed` result; retry the identical mutation with the
+  same ID for `pending` or `interrupted`. For retention operations, consume a
+  `committed` or `stale` result; retry the identical mutation with the same ID
+  for `pruning`. Never wait for show alone to change an unfinished state.
 - When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:
   1. Preserve the original public command and all arguments unchanged.
   2. Run only the lifecycle-store migration command named by installed help.

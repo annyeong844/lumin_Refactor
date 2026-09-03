@@ -42,15 +42,20 @@ Cache cleanup
   Recovery through operation show returns a lumin.cache-cleanup-operation.v2
   object. Inspect its status, result, and lastDeliveryStatus. Delivery status is
   not-attempted, unknown, succeeded, or failed; unknown means the greatest
-  allocated delivery attempt has no durable completion, so recover with the
-  same operation ID rather than starting another cleanup.
+  allocated delivery attempt has no durable completion. When status is
+  committed, consume the stored result instead of starting another cleanup.
 
 Delivery recovery
   If a mutating command may have committed without delivering its result, do
   not invent a new operation ID. Run:
   lumin operation show <operation-id> --format json
-  Then retry the identical mutation with the same operation ID only when the
-  returned operation state requires it. Never repeat the underlying edit.
+  Operation show is read-only and never resumes work or changes liveness. For
+  gate and cache operations, consume result when status is committed; retry the
+  identical mutation with the same operation ID when status is pending or
+  interrupted. For retention operations, consume result when status is
+  committed or stale; retry the identical mutation with the same operation ID
+  when status is pruning. Do not wait for repeated shows to change unfinished
+  state, and never repeat the underlying edit.
 
 Lifecycle-store migration
   When an ordinary repository-state command exits 1 with exactly:
@@ -66,6 +71,8 @@ Lifecycle-store migration
 const AUDIT_HELP: &str = r#"Lumin command help: audit
   lumin audit --jobs <count> --format json
   lumin audit --include <pattern> --exclude <pattern> --entry <repo-path> --role-at <pattern> <role> --resolution-profile <profile> --jobs <count> --format json
+  <role>: test | production | generated | vendor | authored
+  <profile>: bundler | node | node10 | node16 | nodenext
   --include, --exclude, --entry, and --role-at may be repeated."#;
 
 const OVERVIEW_HELP: &str = r#"Lumin command help: overview
@@ -118,6 +125,8 @@ Optional analysis controls
   --capability-at <repo-path> <shape|clone|type-escape>
   --include <pattern> --exclude <pattern> --entry <repo-path>
   --role-at <pattern> <role> --resolution-profile <profile> --jobs <count>
+  <role>: test | production | generated | vendor | authored
+  <profile>: bundler | node | node10 | node16 | nodenext
   --path, --dependency-at, --capability-at, --include, --exclude, --entry, and --role-at may be repeated."#;
 
 const POST_WRITE_HELP: &str = r#"Lumin command help: post-write
@@ -141,7 +150,13 @@ const GATE_HELP: &str = r#"Lumin command help: gate
 
 const OPERATION_HELP: &str = r#"Lumin command help: operation
   lumin operation show <operation-id> --format json
-  lumin operation show -- <operation-id> --format json"#;
+  lumin operation show -- <operation-id> --format json
+State handling
+  Gate/cache committed: consume result without retrying the mutation.
+  Gate/cache pending or interrupted: retry the identical mutation with the same operation ID.
+  Retention committed or stale: consume result without retrying the mutation.
+  Retention pruning: retry the identical mutation with the same operation ID.
+  Operation show is read-only; repeated shows do not resume work or change liveness."#;
 
 const RUNS_HELP: &str = r#"Lumin command help: runs
   lumin runs list --format json

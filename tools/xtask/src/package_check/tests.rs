@@ -122,8 +122,8 @@ fn adapter_rejects_reordered_migration_workflow() {
 #[test]
 fn adapter_rejects_reordered_operation_recovery_workflow() {
     let source = valid_adapter_source().replace(
-        "  query operation show with that operation ID before any retry. Consume a\n",
-        "  retry cleanup before querying operation show. Consume a\n",
+        "  operations, consume a `committed` result; retry the identical mutation with the\n",
+        "  operations, retry the identical mutation before consuming a `committed` result with the\n",
     );
     let result = validate_adapter(CODEX_SKILL, &source);
     assert!(
