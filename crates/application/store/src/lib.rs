@@ -172,6 +172,7 @@ pub fn state_entry_physical_identity_for_test(
 #[cfg(any(
     test,
     feature = "lifecycle-migration-test-fault",
+    feature = "logical-store-snapshot-test",
     feature = "namespace-test-crash",
     feature = "retention-test-crash"
 ))]
@@ -212,9 +213,19 @@ impl RepositoryStore {
         self.namespace.remove_cache_eviction_binding_for_test()
     }
 
-    #[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
-    pub fn current_logical_snapshot_for_test(&self) -> Result<Vec<u8>, StoreError> {
-        self.with_shared_lock(namespace::current_logical_snapshot_for_test)
+    #[cfg(any(
+        test,
+        feature = "logical-store-snapshot-test",
+        feature = "namespace-test-crash",
+        feature = "retention-test-crash"
+    ))]
+    pub fn current_logical_snapshot_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Vec<u8>, StoreError> {
+        let namespace = namespace::NamespaceState::open_for_observation(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.with_observation_lock(namespace::current_logical_snapshot_for_test)
     }
 }
 

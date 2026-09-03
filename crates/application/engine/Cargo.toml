@@ -14,6 +14,7 @@ collection-ordering-test-perturb = [
 ]
 gate-test-fault = []
 lifecycle-migration-test-fault = ["lumin-store/lifecycle-migration-test-fault"]
+logical-store-snapshot-test = ["lumin-store/logical-store-snapshot-test"]
 namespace-test-crash = ["lumin-store/namespace-test-crash"]
 publication-test-crash = ["lumin-store/publication-test-crash"]
 retention-test-crash = ["lumin-store/retention-test-crash"]

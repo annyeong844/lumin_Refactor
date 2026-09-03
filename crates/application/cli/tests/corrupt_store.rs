@@ -13,6 +13,7 @@ use support::{ProcessResult, assert_status, field, run};
 struct NamespaceSnapshot {
     lifecycle_store_identity: PhysicalFileIdentity,
     lifecycle_store_size: u64,
+    lifecycle_store_logical_bytes: Vec<u8>,
     other_entries: BTreeMap<String, Option<Vec<u8>>>,
 }
 
@@ -86,13 +87,17 @@ fn corrupt_canonical_evidence_hard_stops_without_fallback_or_empty_evidence()
     ] {
         let rejected = run(root.path(), &arguments)?;
         assert_integrity_hard_stop(&rejected, &diagnostic);
-        assert_namespace_unchanged(root.path(), &corrupt_snapshot)?;
+        assert_namespace_unchanged(
+            root.path(),
+            &corrupt_snapshot,
+            &format!("rejected `{}`", arguments.join(" ")),
+        )?;
     }
 
     // The older immutable run remains readable only when explicitly selected;
     // the unqualified overview above must not reinterpret it as latest.
     assert_run_truth(root.path(), &first, 1)?;
-    assert_namespace_unchanged(root.path(), &corrupt_snapshot)?;
+    assert_namespace_unchanged(root.path(), &corrupt_snapshot, "older-run queries")?;
     Ok(())
 }
 
@@ -156,6 +161,7 @@ fn namespace_snapshot(root: &Path) -> Result<NamespaceSnapshot, Box<dyn std::err
             &lifecycle_store_path,
         )?,
         lifecycle_store_size: fs::metadata(lifecycle_store)?.len(),
+        lifecycle_store_logical_bytes: lumin_engine::current_logical_store_snapshot_for_test(root)?,
         other_entries,
     })
 }
@@ -163,6 +169,7 @@ fn namespace_snapshot(root: &Path) -> Result<NamespaceSnapshot, Box<dyn std::err
 fn assert_namespace_unchanged(
     root: &Path,
     expected: &NamespaceSnapshot,
+    context: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let observed = namespace_snapshot(root)?;
     assert_eq!(
@@ -171,8 +178,16 @@ fn assert_namespace_unchanged(
     );
     assert_eq!(
         observed.lifecycle_store_size, expected.lifecycle_store_size,
-        "lifecycle.store size changed"
+        "lifecycle.store size changed after {context}"
     );
+    if observed.lifecycle_store_logical_bytes != expected.lifecycle_store_logical_bytes {
+        return Err(std::io::Error::other(format!(
+            "lifecycle.store logical bytes changed after {context}: expected {} bytes, observed {} bytes",
+            expected.lifecycle_store_logical_bytes.len(),
+            observed.lifecycle_store_logical_bytes.len()
+        ))
+        .into());
+    }
     if observed.other_entries != expected.other_entries {
         let names = expected
             .other_entries
@@ -197,7 +212,7 @@ fn assert_namespace_unchanged(
             })
             .collect::<Vec<_>>();
         return Err(std::io::Error::other(format!(
-            "state namespace changed:\n{}",
+            "state namespace changed after {context}:\n{}",
             differences.join("\n")
         ))
         .into());

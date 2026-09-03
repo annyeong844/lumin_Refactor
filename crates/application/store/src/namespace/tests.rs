@@ -15,6 +15,56 @@ fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
     RepositoryStore::open(&admission.canonical_root, &admission.binding)
 }
 
+#[test]
+fn logical_snapshot_observer_never_recovers_or_rewrites_the_store()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let admission = lumin_inventory::repository_admission(root.path())?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    let (attempt_id, _) =
+        crate::publication::reserve_migration_attempt_allocation_for_test(&store, None)?;
+    let store_path = root.path().join(".lumin/lifecycle.store");
+    let physical_before = fs::read(&store_path)?;
+
+    let first = RepositoryStore::current_logical_snapshot_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    let second = RepositoryStore::current_logical_snapshot_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    assert_eq!(second, first);
+    assert_eq!(fs::read(&store_path)?, physical_before);
+
+    let observed: serde_json::Value = serde_json::from_slice(&first)?;
+    assert!(
+        observed
+            .get("attempt_leases")
+            .and_then(|leases| leases.get(attempt_id.as_str()))
+            .is_some(),
+        "observation-only snapshot recovered an incomplete attempt allocation"
+    );
+
+    drop(RepositoryStore::open(
+        &admission.canonical_root,
+        &admission.binding,
+    )?);
+    let recovered = RepositoryStore::current_logical_snapshot_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    let recovered: serde_json::Value = serde_json::from_slice(&recovered)?;
+    assert!(
+        recovered
+            .get("attempt_leases")
+            .and_then(|leases| leases.get(attempt_id.as_str()))
+            .is_none(),
+        "ordinary repository open did not recover the allocation fixture"
+    );
+    Ok(())
+}
+
 fn require_integrity_failure(
     result: Result<RepositoryStore, StoreError>,
 ) -> Result<(), Box<dyn std::error::Error>> {

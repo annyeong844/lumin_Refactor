@@ -160,7 +160,12 @@ pub(super) fn require_idle(guard: &NamespaceGuard) -> Result<(), StoreError> {
     }
 }
 
-#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
 pub(super) fn current_logical_snapshot_for_test(
     guard: &NamespaceGuard,
 ) -> Result<Vec<u8>, StoreError> {
