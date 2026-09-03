@@ -47,8 +47,8 @@ These are execution-matrix counts, not a percentage estimate of product code.
 | --- | ---: | ---: | ---: | --- |
 | Standard | 86 | 86 | 0 | Focused `corrupt-store`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 86 mapped, 0 unmapped. |
 | Determinism | 86 | 86 | 0 | The same focused row passed with 2 semantic captures; `corpus::tests::mode_counts`: 86 mapped, 0 unmapped. |
-| Store crash | 11 | 10 | 1 | Focused `retention-latest-protection` passed through named stale-confirmation commit faults; `corpus::tests::mode_counts`: 10 mapped, 1 unmapped. |
-| **Total execution obligations** | **183** | **182** | **1** | This total deliberately counts each required lane execution. |
+| Store crash | 11 | 11 | 0 | Focused `retention-public-lookup` passed run and gate fault boundaries with matching direct, payload, plan, and operation projections and unchanged logical snapshots; `corpus::tests::mode_counts`: 11 mapped, 0 unmapped. |
+| **Total execution obligations** | **183** | **183** | **0** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -143,11 +143,11 @@ unmapped row or silent fallback.
 
 Owner routes: ARCH-002 and SLICE-001 AC 17, 18, 25, 28, 30, 31, 34, and 36.
 
-- [ ] Map and pass the remaining store-crash row through real public child
+- [x] Map and pass the remaining store-crash row through real public child
   processes and named fault points.
-- [ ] Prove operation retry, publication, retention, migration, namespace, and
+- [x] Prove operation retry, publication, retention, migration, namespace, and
   latest-pointer recovery agree with public lookup state after every death.
-- [ ] Reach store-crash `11/11`.
+- [x] Reach store-crash `11/11`.
 
 Exit: every named crash point has one durable, publicly queryable outcome.
 

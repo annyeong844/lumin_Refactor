@@ -214,6 +214,11 @@ static INV_RET_LOOKUP: &[CorpusInvocation] = &[
     inv!("retention", "lifecycle::retention_truth_survives_public_process_reopen"),
 ];
 #[rustfmt::skip]
+static INV_RET_LOOKUP_CRASH: &[CorpusInvocation] = &[
+    inv!("retention_faults", "run_retention_recovers_every_physical_crash_boundary", RetentionCrash),
+    inv!("retention_faults", "gate_retention_recovers_logical_crash_boundaries", RetentionCrash),
+];
+#[rustfmt::skip]
 static INV_RET_PINS: &[CorpusInvocation] = &[
     inv!("retention", "pins::independent_public_pins_keep_a_run_protected_until_the_last_unpin"),
 ];
@@ -581,7 +586,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     // This fixture emits 52 semantic captures per determinism variant. Keep its
     // three child processes off the same two-core runner as unrelated rows.
     row_sd_determinism_weight!("retention-plan-pagination", INV_RET_PAGINATION, 64),
-    row_sdc!("retention-public-lookup", INV_RET_LOOKUP),
+    row_sdc!("retention-public-lookup", INV_RET_LOOKUP, INV_RET_LOOKUP_CRASH),
     row_sd!("retention-independent-pins", INV_RET_PINS),
     row_sd!("retention-active-transition-reference", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
     row_c!("retention-crash-protocol", INV_RET_CRASH),

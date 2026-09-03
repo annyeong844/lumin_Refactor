@@ -151,11 +151,7 @@ fn all_applicable_selection_retains_every_applicable_row() {
             .filter(|row| row.is_applicable(mode))
             .count();
         assert_eq!(selected.len(), expected);
-        if mode == CorpusMode::StoreCrash {
-            assert!(selected.iter().any(|row| !row.is_mapped(mode)));
-        } else {
-            assert!(selected.iter().all(|row| row.is_mapped(mode)));
-        }
+        assert!(selected.iter().all(|row| row.is_mapped(mode)));
     }
 }
 
@@ -746,6 +742,50 @@ fn retention_latest_protection_uses_the_reviewed_public_crash_fixture() -> Resul
             "latest_protection_recovers_stale_confirmation_commit_death",
             FeatureSet::RetentionCrash,
         )]
+    );
+    Ok(())
+}
+
+#[test]
+fn retention_public_lookup_uses_the_reviewed_public_crash_fixtures() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "retention-public-lookup")
+        .ok_or_else(|| "retention-public-lookup row is missing".to_owned())?;
+    let standard = row.standard.unwrap_or_default();
+    assert_eq!(
+        standard
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![(
+            "retention",
+            "lifecycle::retention_truth_survives_public_process_reopen",
+            FeatureSet::None,
+        )]
+    );
+    assert_eq!(
+        row.determinism.unwrap_or_default().as_ptr(),
+        standard.as_ptr()
+    );
+    assert_eq!(
+        row.store_crash
+            .unwrap_or_default()
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "retention_faults",
+                "run_retention_recovers_every_physical_crash_boundary",
+                FeatureSet::RetentionCrash,
+            ),
+            (
+                "retention_faults",
+                "gate_retention_recovers_logical_crash_boundaries",
+                FeatureSet::RetentionCrash,
+            ),
+        ]
     );
     Ok(())
 }

@@ -19,7 +19,8 @@ const CUTOFF: &str = "9000000000000";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DurableState {
     Prepared,
-    Pruning,
+    PruningMovingPayloads,
+    PruningReadyToCommit,
     Pruned,
 }
 
@@ -27,8 +28,16 @@ impl DurableState {
     fn label(self) -> &'static str {
         match self {
             Self::Prepared => "prepared",
-            Self::Pruning => "pruning",
+            Self::PruningMovingPayloads | Self::PruningReadyToCommit => "pruning",
             Self::Pruned => "pruned",
+        }
+    }
+
+    fn recoverable_state(self) -> Option<&'static str> {
+        match self {
+            Self::Prepared | Self::Pruned => None,
+            Self::PruningMovingPayloads => Some("moving-payloads"),
+            Self::PruningReadyToCommit => Some("ready-to-commit"),
         }
     }
 }
@@ -172,26 +181,54 @@ impl Fixture {
     }
 
     pub fn assert_state(&self, expected: DurableState) -> Result<(), Box<dyn std::error::Error>> {
+        let current_pending = expected != DurableState::Prepared && self.physical_move_count > 0;
+        let committed_pending =
+            (expected == DurableState::Pruned).then_some(self.physical_move_count > 0);
+        self.assert_public_lookup_truth(expected, current_pending, committed_pending)
+    }
+
+    fn assert_public_lookup_truth(
+        &self,
+        expected: DurableState,
+        current_pending: bool,
+        committed_pending: Option<bool>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let before = self.logical_snapshot()?;
         let plan = self.plan()?;
+        assert_eq!(
+            plan.get("planId").and_then(Value::as_str),
+            Some(self.plan_id.as_str())
+        );
         assert_eq!(
             plan.get("state").and_then(Value::as_str),
             Some(expected.label())
         );
+        assert_eq!(
+            plan.get("physicalReclamationPending")
+                .and_then(Value::as_bool),
+            Some(current_pending)
+        );
         match expected {
             DurableState::Prepared => {
                 self.assert_live_target()?;
-                self.assert_operation_absent(Self::CONFIRM_OPERATION_ID)
+                self.assert_operation_absent(Self::CONFIRM_OPERATION_ID)?;
             }
-            DurableState::Pruning => {
-                self.assert_tombstone("pruning", self.physical_move_count > 0)?;
-                self.assert_operation("pruning", "pruning", None, None)
+            DurableState::PruningMovingPayloads | DurableState::PruningReadyToCommit => {
+                let tombstone = self.assert_tombstone(expected, current_pending)?;
+                self.assert_operation(expected, &tombstone, committed_pending, None)?;
             }
             DurableState::Pruned => {
-                let pending = self.physical_move_count > 0;
-                self.assert_tombstone("pruned", pending)?;
-                self.assert_operation("committed", "pruned", Some(pending), Some(pending))
+                let tombstone = self.assert_tombstone(expected, current_pending)?;
+                self.assert_operation(
+                    expected,
+                    &tombstone,
+                    committed_pending,
+                    Some(current_pending),
+                )?;
             }
         }
+        assert_eq!(self.logical_snapshot()?, before);
+        Ok(())
     }
 
     pub fn recover_and_assert_final_truth(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -208,19 +245,10 @@ impl Fixture {
         assert_status(&retry, 0);
         assert_eq!(retry.stdout, confirmed.stdout);
 
-        let plan = self.plan()?;
-        assert_eq!(plan.get("state").and_then(Value::as_str), Some("pruned"));
-        assert_eq!(
-            plan.get("physicalReclamationPending")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-        self.assert_tombstone("pruned", false)?;
-        self.assert_operation(
-            "committed",
-            "pruned",
+        self.assert_public_lookup_truth(
+            DurableState::Pruned,
+            false,
             Some(self.physical_move_count > 0),
-            Some(false),
         )?;
         match &self.target {
             Target::Run { retained, .. } => self.assert_only_run(retained),
@@ -285,14 +313,23 @@ impl Fixture {
     }
 
     fn assert_live_target(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let (arguments, identity_pointer, target) = match &self.target {
-            Target::Run { target, .. } => (
-                vec!["overview", "--run", target.as_str()],
-                "/scope/id",
-                target,
-            ),
-            Target::Gate { target } => (vec!["gate", "show", target.as_str()], "/gateId", target),
-        };
+        let (arguments, identity_pointer, payload_arguments, payload_identity_pointer, target) =
+            match &self.target {
+                Target::Run { target, .. } => (
+                    vec!["overview", "--run", target.as_str()],
+                    "/scope/id",
+                    vec!["findings", "--run", target.as_str(), "--area", "dead-code"],
+                    "/scope/id",
+                    target,
+                ),
+                Target::Gate { target } => (
+                    vec!["gate", "show", target.as_str()],
+                    "/gateId",
+                    vec!["gate", "findings", target.as_str(), "--revision", "0"],
+                    "/scope/gateId",
+                    target,
+                ),
+            };
         let output = run(self.root(), &arguments)?;
         assert_status(&output, 0);
         assert_eq!(
@@ -301,22 +338,61 @@ impl Fixture {
                 .and_then(Value::as_str),
             Some(target.as_str())
         );
+
+        let payload = run(self.root(), &payload_arguments)?;
+        assert_status(&payload, 0);
+        let body = json(&payload.stdout)?;
+        assert_eq!(
+            body.get("schemaVersion").and_then(Value::as_str),
+            Some("lumin.collection.v1")
+        );
+        assert_eq!(
+            body.pointer(payload_identity_pointer)
+                .and_then(Value::as_str),
+            Some(target.as_str())
+        );
+        assert!(body.get("items").and_then(Value::as_array).is_some());
         Ok(())
     }
 
     fn assert_tombstone(
         &self,
-        status: &str,
+        expected: DurableState,
         pending: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let arguments = match &self.target {
-            Target::Run { target, .. } => vec!["overview", "--run", target],
-            Target::Gate { target } => vec!["gate", "show", target],
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let (arguments, payload_arguments, record_kind, target) = match &self.target {
+            Target::Run { target, .. } => (
+                vec!["overview", "--run", target.as_str()],
+                vec!["findings", "--run", target.as_str(), "--area", "dead-code"],
+                "run",
+                target,
+            ),
+            Target::Gate { target } => (
+                vec!["gate", "show", target.as_str()],
+                vec!["gate", "findings", target.as_str(), "--revision", "0"],
+                "gate",
+                target,
+            ),
         };
         let output = run(self.root(), &arguments)?;
         assert_status(&output, 0);
+        let payload = run(self.root(), &payload_arguments)?;
+        assert_status(&payload, 0);
+        assert_eq!(payload.stdout, output.stdout);
         let body = json(&output.stdout)?;
-        assert_eq!(body.get("status").and_then(Value::as_str), Some(status));
+        assert_eq!(
+            body.get("status").and_then(Value::as_str),
+            Some(expected.label())
+        );
+        assert_eq!(
+            body.pointer("/tombstone/recordKind")
+                .and_then(Value::as_str),
+            Some(record_kind)
+        );
+        assert_eq!(
+            body.pointer("/tombstone/recordId").and_then(Value::as_str),
+            Some(target.as_str())
+        );
         assert_eq!(
             body.pointer("/tombstone/planId").and_then(Value::as_str),
             Some(self.plan_id.as_str())
@@ -326,13 +402,27 @@ impl Fixture {
                 .and_then(Value::as_bool),
             Some(pending)
         );
-        Ok(())
+        assert_eq!(
+            body.pointer("/tombstone/recoverableState")
+                .and_then(Value::as_str),
+            expected.recoverable_state()
+        );
+        if expected == DurableState::Pruned {
+            assert!(
+                body.pointer("/tombstone/tombstoneIdentity")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+        } else {
+            assert!(body.pointer("/tombstone/tombstoneIdentity").is_none());
+        }
+        Ok(body)
     }
 
     fn assert_operation(
         &self,
-        operation_status: &str,
-        result_status: &str,
+        expected: DurableState,
+        tombstone: &Value,
         committed_pending: Option<bool>,
         current_pending: Option<bool>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -343,18 +433,59 @@ impl Fixture {
         assert_status(&output, 0);
         let body = json(&output.stdout)?;
         assert_eq!(
+            body.get("schemaVersion").and_then(Value::as_str),
+            Some("lumin.retention-operation.v1")
+        );
+        assert_eq!(
+            body.get("operationId").and_then(Value::as_str),
+            Some(Self::CONFIRM_OPERATION_ID)
+        );
+        assert_eq!(
+            body.pointer("/operation/operationId")
+                .and_then(Value::as_str),
+            Some(Self::CONFIRM_OPERATION_ID)
+        );
+        assert_eq!(
+            body.pointer("/operation/kind").and_then(Value::as_str),
+            Some(match &self.target {
+                Target::Run { .. } => "run-prune-confirm",
+                Target::Gate { .. } => "gate-prune-confirm",
+            })
+        );
+        assert_eq!(
             body.pointer("/operation/status").and_then(Value::as_str),
-            Some(operation_status)
+            Some(if expected == DurableState::Pruned {
+                "committed"
+            } else {
+                "pruning"
+            })
+        );
+        assert_eq!(
+            body.pointer("/operation/planId").and_then(Value::as_str),
+            Some(self.plan_id.as_str())
+        );
+        assert_eq!(
+            body.pointer("/operation/result/kind")
+                .and_then(Value::as_str),
+            Some("retention")
         );
         assert_eq!(
             body.pointer("/operation/result/result/status")
                 .and_then(Value::as_str),
-            Some(result_status)
+            Some(expected.label())
         );
         assert_eq!(
             body.pointer("/operation/result/result/planId")
                 .and_then(Value::as_str),
             Some(self.plan_id.as_str())
+        );
+        assert_eq!(
+            body.pointer("/operation/result/result/recoverableState"),
+            tombstone.pointer("/tombstone/recoverableState")
+        );
+        assert_eq!(
+            body.pointer("/operation/result/result/tombstoneIdentity"),
+            tombstone.pointer("/tombstone/tombstoneIdentity")
         );
         if let Some(pending) = committed_pending {
             assert_eq!(
@@ -371,6 +502,10 @@ impl Fixture {
             );
         }
         Ok(())
+    }
+
+    fn logical_snapshot(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        lumin_engine::current_logical_store_snapshot_for_test(self.root()).map_err(Into::into)
     }
 
     fn assert_only_run(&self, retained: &str) -> Result<(), Box<dyn std::error::Error>> {
