@@ -136,7 +136,8 @@ const GATE_HELP: &str = r#"Lumin command help: gate
   lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json"#;
 
 const OPERATION_HELP: &str = r#"Lumin command help: operation
-  lumin operation show <operation-id> --format json"#;
+  lumin operation show <operation-id> --format json
+  lumin operation show -- <operation-id> --format json"#;
 
 const RUNS_HELP: &str = r#"Lumin command help: runs
   lumin runs list --format json

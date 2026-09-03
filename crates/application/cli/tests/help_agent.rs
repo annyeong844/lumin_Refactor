@@ -114,7 +114,7 @@ fn command_help_exposes_owned_syntax_without_creating_state()
         ),
         (
             "operation",
-            "lumin operation show <operation-id> --format json",
+            "lumin operation show -- <operation-id> --format json",
         ),
         ("runs", "lumin runs list --cursor <cursor> --format json"),
         (

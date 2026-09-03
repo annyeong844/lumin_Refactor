@@ -74,6 +74,7 @@ impl AdapterAction {
 
 struct AgentHelp {
     commands: BTreeMap<AdapterAction, String>,
+    option_prefixed_operation_show: String,
 }
 
 impl AgentHelp {
@@ -102,7 +103,37 @@ impl AgentHelp {
             }
             commands.insert(*action, matches[0].to_owned());
         }
-        Ok(Self { commands })
+        let operation_help_arguments =
+            command_help_bootstrap_arguments(relative, source, AdapterAction::OperationShow)?;
+        let operation_help = expect_success(
+            run_adapter_command(binary, root, &operation_help_arguments),
+            &format!("{relative} installed operation command help"),
+        )?;
+        let operation_help = String::from_utf8(operation_help.stdout).map_err(|error| {
+            format!("{relative} installed operation help is not UTF-8: {error}")
+        })?;
+        let option_prefixed_operation_show = operation_help
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                command_matches(AdapterAction::OperationShow, line)
+                    && line
+                        .split_ascii_whitespace()
+                        .collect::<Vec<_>>()
+                        .windows(2)
+                        .any(|pair| pair == ["--", "<operation-id>"])
+            })
+            .collect::<Vec<_>>();
+        if option_prefixed_operation_show.len() != 1 {
+            return Err(format!(
+                "{relative} installed operation help must expose exactly one option-prefixed recovery command, found {}",
+                option_prefixed_operation_show.len()
+            ));
+        }
+        Ok(Self {
+            commands,
+            option_prefixed_operation_show: option_prefixed_operation_show[0].to_owned(),
+        })
     }
 
     fn command_arguments(
@@ -118,6 +149,26 @@ impl AgentHelp {
             )
         })?;
         command_arguments(relative, command, replacements)
+    }
+
+    fn operation_show_arguments(
+        &self,
+        relative: &str,
+        operation_id: &str,
+    ) -> Result<Vec<String>, String> {
+        if operation_id.starts_with("--") {
+            command_arguments(
+                relative,
+                &self.option_prefixed_operation_show,
+                &[("<operation-id>", operation_id)],
+            )
+        } else {
+            self.command_arguments(
+                relative,
+                AdapterAction::OperationShow,
+                &[("<operation-id>", operation_id)],
+            )
+        }
     }
 }
 
@@ -159,7 +210,7 @@ fn command_help_bootstrap_arguments(
     let mut arguments = Vec::new();
     for token in command.split_ascii_whitespace().skip(1) {
         if token == "<command>" {
-            arguments.extend(action.selector().iter().map(|value| (*value).to_owned()));
+            arguments.push(action.selector()[0].to_owned());
         } else {
             arguments.push(token.to_owned());
         }
@@ -573,7 +624,7 @@ fn execute_adapter_operation_workflow(
     let run_confirm_id = operation_id(adapter_name, "run-prune-confirm");
     let gate_plan_id = operation_id(adapter_name, "gate-prune-plan");
     let gate_confirm_id = operation_id(adapter_name, "gate-prune-confirm");
-    let cleanup_id = operation_id(adapter_name, "cache-clean");
+    let cleanup_id = format!("--{}", operation_id(adapter_name, "cache-clean"));
     require_unique_operation_ids(
         relative,
         [
@@ -913,11 +964,7 @@ fn recover_uncertain_mutation(
         ));
     }
 
-    let show_arguments = help.command_arguments(
-        relative,
-        AdapterAction::OperationShow,
-        &[("<operation-id>", operation_id)],
-    )?;
+    let show_arguments = help.operation_show_arguments(relative, operation_id)?;
     let shown = expect_success(
         run_adapter_command(binary, root, &show_arguments),
         &format!("{relative} {label} operation-show recovery"),
