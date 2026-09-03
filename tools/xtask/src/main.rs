@@ -71,7 +71,7 @@ fn main() -> ExitCode {
                  architecture-check\n  \
                  generated-tables --write\n  \
                  path-codec --write\n  \
-                 package-check windows-x64|linux-x64|skills\n  \
+                 package-check stage <windows-x64|linux-x64>|windows-x64|linux-x64|skills\n  \
                  ci-test-shard --suite cli-integration|store-lib --index N --count N [--jobs N]\n  \
                  corpus foundation [--determinism|--store-crash] [--mapped-only|--row ID] [--row-jobs N] [--row-shard-index N --row-shard-count N] [--format human|json]"
             );

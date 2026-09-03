@@ -4,7 +4,7 @@ use std::process::Stdio;
 
 use super::{
     downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
-    expect_string, expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
+    expect_string, expect_success, locate_fixture_binary, parse_json, run_binary,
     run_binary_with_broken_stdout, run_binary_with_stdout, scratch_directory_for,
     validate_help_output,
 };
@@ -12,11 +12,10 @@ use super::{
 const MAX_EXECUTABLE_BYTES: u64 = 12_582_912;
 
 pub(super) fn check(target: &str) -> Result<(), String> {
-    validate_host_target(target)?;
-    let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
-    let binary = locate_binary(&workspace)?;
+    let package = super::artifact::load(target)?;
+    let binary = &package.binary;
     let fixture_binary = locate_fixture_binary()?;
-    let size = fs::metadata(&binary)
+    let size = fs::metadata(binary)
         .map_err(|error| format!("cannot inspect packaged lumin binary: {error}"))?
         .len();
     if size > MAX_EXECUTABLE_BYTES {
@@ -28,7 +27,7 @@ pub(super) fn check(target: &str) -> Result<(), String> {
     let scratch = scratch_directory_for("platform")?;
     fs::create_dir(&scratch)
         .map_err(|error| format!("cannot create package-check scratch directory: {error}"))?;
-    let result = validate_platform_contract(&binary, &fixture_binary, &scratch);
+    let result = validate_platform_contract(binary, &fixture_binary, &scratch, &package.build_id);
     let cleanup = fs::remove_dir_all(&scratch)
         .map_err(|error| format!("cannot remove package-check scratch directory: {error}"));
     result?;
@@ -36,34 +35,11 @@ pub(super) fn check(target: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_host_target(target: &str) -> Result<(), String> {
-    let host = match std::env::consts::OS {
-        "windows" => "windows-x64",
-        "linux" => "linux-x64",
-        other => {
-            return Err(format!(
-                "package checks support only Windows and Linux; current OS is {other}"
-            ));
-        }
-    };
-    if std::env::consts::ARCH != "x86_64" {
-        return Err(format!(
-            "package checks require x86_64; current architecture is {}",
-            std::env::consts::ARCH
-        ));
-    }
-    if target != host {
-        return Err(format!(
-            "package target {target} cannot be executed on host {host}"
-        ));
-    }
-    Ok(())
-}
-
 fn validate_platform_contract(
     binary: &Path,
     fixture_binary: &Path,
     scratch: &Path,
+    expected_build_id: &str,
 ) -> Result<(), String> {
     let capabilities_root = scratch.join("capabilities");
     fs::create_dir(&capabilities_root)
@@ -86,9 +62,9 @@ fn validate_platform_contract(
         .pointer("/scope/buildId")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "capabilities omitted scope.buildId".to_owned())?;
-    if !build_id.starts_with("build_") {
+    if build_id != expected_build_id {
         return Err(format!(
-            "capabilities returned a malformed build ID: {build_id}"
+            "capabilities build ID {build_id} differs from package manifest {expected_build_id}"
         ));
     }
 
