@@ -1,10 +1,10 @@
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{
     downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
-    expect_string, expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
+    expect_string, expect_success, locate_fixture_binary, parse_json, run_binary,
     run_binary_with_broken_stdout, scratch_directory_for, validate_help_output,
 };
 
@@ -28,56 +28,16 @@ pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
 const CACHE_CLEANUP_COMMAND: &str = "lumin cache clean --operation-id <operation-id> --format json";
 const OPERATION_SHOW_COMMAND: &str = "lumin operation show <operation-id> --format json";
 const MIGRATION_ARGUMENTS: &[&str] = &["store", "migrate", "--format", "json"];
-const PACKAGE_ROOT_ENVIRONMENT: &str = "LUMIN_PACKAGE_ROOT";
-
-pub(super) fn stage() -> Result<(), String> {
-    let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
-    let package_root = configured_package_root()?;
-    if !package_root.is_absolute() {
-        return Err("staged package root must be absolute".to_owned());
-    }
-    let canonical_workspace = workspace
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve workspace root: {error}"))?;
-    if package_root.starts_with(&canonical_workspace) {
-        return Err("staged skill package must be outside the checkout workspace".to_owned());
-    }
-    stage_skill_sources(&workspace, &package_root)
-}
-
 pub(super) fn check() -> Result<(), String> {
-    let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
-    let package_root = locate_package_root(&workspace)?;
-    validate_skill_sources(&package_root)?;
-    let binary = locate_binary(&workspace)?;
+    let package = super::artifact::load_for_host()?;
+    let package_root = &package.root;
+    validate_skill_sources(package_root)?;
+    let binary = &package.binary;
     let fixture_binary = locate_fixture_binary()?;
-    validate_binary_agent_contract(&binary)?;
-    validate_packaged_adapter_migration_workflows(&package_root, &binary, &fixture_binary)?;
-    validate_packaged_adapter_operation_workflows(&package_root, &binary, &fixture_binary)?;
+    validate_binary_agent_contract(binary)?;
+    validate_packaged_adapter_migration_workflows(package_root, binary, &fixture_binary)?;
+    validate_packaged_adapter_operation_workflows(package_root, binary, &fixture_binary)?;
     Ok(())
-}
-
-fn configured_package_root() -> Result<PathBuf, String> {
-    std::env::var_os(PACKAGE_ROOT_ENVIRONMENT)
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("a staged package root is required; set {PACKAGE_ROOT_ENVIRONMENT}"))
-}
-
-fn locate_package_root(workspace: &Path) -> Result<PathBuf, String> {
-    let configured = configured_package_root()?;
-    let package_root = configured.canonicalize().map_err(|error| {
-        format!(
-            "cannot open staged package root {}: {error}",
-            configured.display()
-        )
-    })?;
-    let workspace = workspace
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve workspace root: {error}"))?;
-    if package_root.starts_with(&workspace) {
-        return Err("staged skill package must be outside the checkout workspace".to_owned());
-    }
-    Ok(package_root)
 }
 
 pub(super) fn stage_skill_sources(workspace: &Path, package_root: &Path) -> Result<(), String> {

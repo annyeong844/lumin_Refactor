@@ -52,8 +52,9 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 Known non-corpus exit gaps:
 
-- Windows/Linux packages and packaged Codex/Claude Code adapters are not yet
-  accepted as products;
+- packaged Codex/Claude Code adapter mutation coverage and packaged native
+  path/root, NUL-input, cursor, and physical-alias round trips are not yet
+  accepted;
 - approved performance and memory budgets have not yet been achieved and
   proven by the completed public binary.
 
@@ -155,8 +156,10 @@ Exit: every named crash point has one durable, publicly queryable outcome.
 
 Owner routes: PRODUCT-000 and SLICE-001 Sections 11 and 14, AC 8, 9, and 35.
 
-- [ ] Build and probe locked prebuilt Windows and Linux packages.
-- [ ] Run package behavior with Cargo and Node unavailable.
+- [x] Build and probe locked prebuilt Windows and Linux packages through one
+  exact staged inventory whose manifest binds the executable and both adapters
+  to the public binary build ID and payload digests.
+- [x] Run package behavior with Cargo and Node unavailable.
 - [ ] Prove Codex and Claude Code adapters invoke the same public commands and
   DTOs without embedded semantic tables or source fallbacks.
 - [ ] Prove native path/root, NUL-input, cursor, and physical-alias round trips

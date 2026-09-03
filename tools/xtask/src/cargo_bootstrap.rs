@@ -46,6 +46,22 @@ const CORPUS_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.arguments }}"
 );
+const RELEASE_BUILD_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo build -p lumin-cli --release --locked ${{ matrix.build_arguments }}"
+);
+const RELEASE_STAGE_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- package-check stage ${{ matrix.package_target }}"
+);
+const RELEASE_PLATFORM_PROBE_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- package-check ${{ matrix.package_target }}"
+);
+const RELEASE_SKILL_PROBE_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- package-check skills"
+);
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
@@ -215,6 +231,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     validate_windows_core_job(&jobs, violations);
     validate_windows_integration_job(&jobs, violations);
     validate_corpus_job(&jobs, violations);
+    validate_release_job(&jobs, violations);
     validate_bootstrap_test_job(&jobs, violations);
     validate_required_job(&jobs, violations);
 }
@@ -889,6 +906,80 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
     }
 }
 
+fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("release") else {
+        return;
+    };
+    let lines = block.lines().map(str::trim).collect::<Vec<_>>();
+    for required in [
+        "package_target: linux-x64",
+        "build_arguments: --target x86_64-unknown-linux-musl",
+        "binary_path: x86_64-unknown-linux-musl/release/lumin",
+        "package_target: windows-x64",
+        "binary_path: release/lumin.exe",
+        "LUMIN_BUILD_REVISION: ${{ github.sha }}",
+    ] {
+        if lines.iter().filter(|line| **line == required).count() != 1 {
+            violations.push(format!(
+                "release job must retain exactly one reviewed package binding: {required}"
+            ));
+        }
+    }
+    for (binding, count) in [
+        (
+            "LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}",
+            1,
+        ),
+        (
+            "LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}",
+            2,
+        ),
+        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 3),
+    ] {
+        if lines.iter().filter(|line| **line == binding).count() != count {
+            violations.push(format!(
+                "release job must bind staged package input exactly {count} time(s): {binding}"
+            ));
+        }
+    }
+
+    let commands = run_commands(block);
+    for (command, label) in [
+        (RELEASE_BUILD_RUN, "locked release build"),
+        (RELEASE_STAGE_RUN, "package staging"),
+        (RELEASE_PLATFORM_PROBE_RUN, "platform package probe"),
+        (RELEASE_SKILL_PROBE_RUN, "skill package probe"),
+    ] {
+        if commands
+            .iter()
+            .filter(|observed| *observed == command)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "release job must execute the reviewed {label} exactly once"
+            ));
+        }
+    }
+    let stage = commands
+        .iter()
+        .position(|command| command == RELEASE_STAGE_RUN);
+    let platform = commands
+        .iter()
+        .position(|command| command == RELEASE_PLATFORM_PROBE_RUN);
+    let skills = commands
+        .iter()
+        .position(|command| command == RELEASE_SKILL_PROBE_RUN);
+    if !matches!(
+        (stage, platform, skills),
+        (Some(stage), Some(platform), Some(skills)) if stage < platform && platform < skills
+    ) {
+        violations.push(
+            "release job must stage one package before its platform and skill probes".to_owned(),
+        );
+    }
+}
+
 fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
     let Some(block) = jobs.get("required") else {
         return;
@@ -1023,6 +1114,21 @@ mod tests {
             violations(&source)
                 .iter()
                 .any(|violation| violation.contains("bypasses the guard"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_package_must_be_staged_before_both_probes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = workflow()?.replace(
+            RELEASE_STAGE_RUN,
+            "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check skills",
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|violation| violation.contains("reviewed package staging"))
         );
         Ok(())
     }

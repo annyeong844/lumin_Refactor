@@ -4,11 +4,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+mod artifact;
 mod platform;
 mod skills;
 
 const BINARY_ENVIRONMENT: &str = "LUMIN_PACKAGE_BINARY";
 const FIXTURE_BINARY_ENVIRONMENT: &str = "LUMIN_PACKAGE_FIXTURE_BINARY";
+const PACKAGE_ROOT_ENVIRONMENT: &str = "LUMIN_PACKAGE_ROOT";
 const MIGRATION_RESPONSE: &str = concat!(
     "{\"schemaVersion\":\"lumin.lifecycle-store-migration.v1\",",
     "\"storeSchema\":\"lumin-lifecycle-store-header.v13\",",
@@ -19,19 +21,19 @@ const MIGRATION_REQUIRED_DIAGNOSTIC: &str =
 
 pub(crate) fn run(arguments: &[String]) -> ExitCode {
     let result = match arguments {
-        [target] if target == "stage-skills" => skills::stage(),
+        [command, target] if command == "stage" => artifact::stage(target),
         [target] if target == "skills" => skills::check(),
         [target] if target == "windows-x64" || target == "linux-x64" => platform::check(target),
         _ => {
             eprintln!(
-                "[TOOL ERROR] usage: lumin-xtask package-check windows-x64|linux-x64|stage-skills|skills"
+                "[TOOL ERROR] usage: lumin-xtask package-check stage <windows-x64|linux-x64>|windows-x64|linux-x64|skills"
             );
             return ExitCode::from(2);
         }
     };
     match result {
         Ok(()) => {
-            println!("package-check {}: PASS", arguments[0]);
+            println!("package-check {}: PASS", arguments.join(" "));
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -226,39 +228,6 @@ fn validate_help_output(bytes: &[u8]) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn locate_binary(workspace: &Path) -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os(BINARY_ENVIRONMENT) {
-        return canonical_binary(PathBuf::from(path));
-    }
-    let suffix = std::env::consts::EXE_SUFFIX;
-    let mut candidates = Vec::new();
-    if let Some(target) = std::env::var_os("CARGO_TARGET_DIR") {
-        let target = PathBuf::from(target);
-        candidates.push(target.join("release").join(format!("lumin{suffix}")));
-        candidates.push(target.join("debug").join(format!("lumin{suffix}")));
-    }
-    candidates.push(
-        workspace
-            .join("target")
-            .join("release")
-            .join(format!("lumin{suffix}")),
-    );
-    candidates.push(
-        workspace
-            .join("target")
-            .join("debug")
-            .join(format!("lumin{suffix}")),
-    );
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.is_file())
-        .map(canonical_binary)
-        .transpose()?
-        .ok_or_else(|| {
-            format!("a built lumin binary is required; set {BINARY_ENVIRONMENT} to its exact path")
-        })
 }
 
 fn locate_fixture_binary() -> Result<PathBuf, String> {
