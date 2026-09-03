@@ -17,45 +17,42 @@ const ADAPTER_PREFIX: &str = concat!(
     "# Lumin\n",
     "\n",
     "Run `lumin help-agent` from the repository root before choosing command syntax.\n",
-    "Treat that installed-binary output as the command and recovery contract.\n",
+    "Use `lumin <command> --help` when a returned cursor or workflow step needs\n",
+    "options not shown in the short agent help. The installed binary is the only\n",
+    "command-syntax and DTO authority.\n",
     "\n",
     "- Use only the packaged `lumin` binary and its public JSON responses.\n",
 );
 pub(super) const QUERY_WORKFLOW: &str = concat!(
-    "- Follow these public command templates exactly; they are checked projections\n",
-    "  of the installed binary's agent help, not a second command contract:\n",
-    "  1. `lumin audit --jobs 1 --format json`\n",
-    "  2. `lumin overview --format json`\n",
-    "  3. `lumin findings --run <run-id> --area dead-code --format json`\n",
-    "  4. `lumin explain --run <run-id> <finding-id> --format json`\n",
+    "- Audit with the deterministic single-worker setting, retain its concrete run\n",
+    "  ID, then query overview, relevant findings, and explanations for chosen IDs.\n",
+    "  When a bounded response has a `nextCursor`, use that command's installed help\n",
+    "  and follow the cursor until `truncated` is false when exhaustive output is\n",
+    "  required.\n",
 );
 pub(super) const MUTATION_WORKFLOW: &str = concat!(
-    "- Generate and retain a unique operation ID before each command below. Retain\n",
-    "  every returned gate, run, plan, and pin ID needed by the next command:\n",
-    "  1. `lumin pre-write --operation-id <operation-id> --path <repo-path> --format json`\n",
-    "  2. `lumin post-write <gate-id> --operation-id <operation-id> --format json`\n",
-    "  3. `lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json`\n",
-    "  4. `lumin runs pin <run-id> --operation-id <operation-id> --reason <reason> --format json`\n",
-    "  5. `lumin runs unpin <pin-id> --operation-id <operation-id> --format json`\n",
-    "  6. `lumin runs prune plan --before <unix-millis> --operation-id <operation-id> --format json`\n",
-    "  7. `lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json`\n",
-    "  8. `lumin gate prune plan --terminal-before <unix-millis> --operation-id <operation-id> --format json`\n",
-    "  9. `lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json`\n",
+    "- Generate and retain a unique operation ID before every gate, retention, or\n",
+    "  cache-cleanup mutation. Retain every returned gate, run, plan, and pin ID.\n",
+    "- For a write, request pre-write authorization for the exact repository paths,\n",
+    "  edit only after an authorizing decision, then close that gate with post-write.\n",
+    "  Use gate abandon with its returned gate ID when the authorized edit is\n",
+    "  cancelled.\n",
+    "- For retention, pin and unpin by returned IDs. Create a plan before confirming\n",
+    "  run or terminal-gate pruning, and confirm only the exact returned plan ID.\n",
 );
 pub(super) const MIGRATION_WORKFLOW: &str = concat!(
     "- When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:\n",
     "  1. Preserve the original public command and all arguments unchanged.\n",
-    "  2. Run `lumin store migrate --format json` and no other migration command.\n",
+    "  2. Run only the lifecycle-store migration command named by installed help.\n",
     "  3. Accept only the exact migration DTO printed by the public agent help.\n",
     "  4. Retry the preserved original public command with the same arguments.\n",
 );
 pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
     "- If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.\n",
-    "- For uncertain cache-cleanup delivery, follow this exact public recovery sequence:\n",
-    "  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.\n",
-    "  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.\n",
-    "  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.\n",
-    "  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by the public agent help; never mint a replacement ID.\n",
+    "- For uncertain cache-cleanup delivery, preserve the exact original request and\n",
+    "  query operation show with that operation ID before any retry. Consume a\n",
+    "  matching committed result without rerunning cleanup; otherwise resume only as\n",
+    "  instructed by installed help, with the same ID and no replacement ID.\n",
 );
 const ADAPTER_SUFFIX: &str = concat!(
     "- Never read, edit, infer, or repair `.lumin` internals. Missing, failed, stale,\n",
@@ -64,59 +61,7 @@ const ADAPTER_SUFFIX: &str = concat!(
     "Keep responses concise: cite concrete IDs and the public command result that\n",
     "supports each recommendation.\n",
 );
-const HELP_AGENT_COMMAND: &str = "lumin help-agent";
-const AUDIT_COMMAND: &str = "lumin audit --jobs 1 --format json";
-const OVERVIEW_COMMAND: &str = "lumin overview --format json";
-const FINDINGS_COMMAND: &str = "lumin findings --run <run-id> --area dead-code --format json";
-const EXPLAIN_COMMAND: &str = "lumin explain --run <run-id> <finding-id> --format json";
-const PRE_WRITE_COMMAND: &str =
-    "lumin pre-write --operation-id <operation-id> --path <repo-path> --format json";
-const POST_WRITE_COMMAND: &str =
-    "lumin post-write <gate-id> --operation-id <operation-id> --format json";
-const GATE_ABANDON_COMMAND: &str = concat!(
-    "lumin gate abandon <gate-id> --operation-id <operation-id> ",
-    "--reason <reason> --format json",
-);
-const RUN_PIN_COMMAND: &str = concat!(
-    "lumin runs pin <run-id> --operation-id <operation-id> ",
-    "--reason <reason> --format json",
-);
-const RUN_UNPIN_COMMAND: &str =
-    "lumin runs unpin <pin-id> --operation-id <operation-id> --format json";
-const RUN_PRUNE_PLAN_COMMAND: &str = concat!(
-    "lumin runs prune plan --before <unix-millis> ",
-    "--operation-id <operation-id> --format json",
-);
-const RUN_PRUNE_CONFIRM_COMMAND: &str =
-    "lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json";
-const GATE_PRUNE_PLAN_COMMAND: &str = concat!(
-    "lumin gate prune plan --terminal-before <unix-millis> ",
-    "--operation-id <operation-id> --format json",
-);
-const GATE_PRUNE_CONFIRM_COMMAND: &str =
-    "lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json";
-const CACHE_CLEANUP_COMMAND: &str = "lumin cache clean --operation-id <operation-id> --format json";
-const OPERATION_SHOW_COMMAND: &str = "lumin operation show <operation-id> --format json";
-const MIGRATION_COMMAND: &str = "lumin store migrate --format json";
-const PUBLIC_COMMAND_TEMPLATES: &[&str] = &[
-    HELP_AGENT_COMMAND,
-    AUDIT_COMMAND,
-    OVERVIEW_COMMAND,
-    FINDINGS_COMMAND,
-    EXPLAIN_COMMAND,
-    PRE_WRITE_COMMAND,
-    POST_WRITE_COMMAND,
-    GATE_ABANDON_COMMAND,
-    RUN_PIN_COMMAND,
-    RUN_UNPIN_COMMAND,
-    RUN_PRUNE_PLAN_COMMAND,
-    RUN_PRUNE_CONFIRM_COMMAND,
-    GATE_PRUNE_PLAN_COMMAND,
-    GATE_PRUNE_CONFIRM_COMMAND,
-    CACHE_CLEANUP_COMMAND,
-    OPERATION_SHOW_COMMAND,
-    MIGRATION_COMMAND,
-];
+const ADAPTER_COMMAND_BOOTSTRAPS: &[&str] = &["lumin help-agent", "lumin <command> --help"];
 
 pub(super) fn canonical_adapter_source() -> String {
     [
@@ -204,23 +149,12 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
             ));
         }
     }
-    if source.matches(MIGRATION_WORKFLOW).count() != 1
-        || source.matches("lumin store migrate").count() != 1
-    {
+    if source.matches(MIGRATION_WORKFLOW).count() != 1 {
         return Err(format!(
             "{relative} must contain exactly one canonical migration recovery workflow"
         ));
     }
-    if source.matches(OPERATION_RECOVERY_WORKFLOW).count() != 1
-        || source
-            .matches(&format!("`{CACHE_CLEANUP_COMMAND}`"))
-            .count()
-            != 1
-        || source
-            .matches(&format!("`{OPERATION_SHOW_COMMAND}`"))
-            .count()
-            != 1
-    {
+    if source.matches(OPERATION_RECOVERY_WORKFLOW).count() != 1 {
         return Err(format!(
             "{relative} must contain exactly one canonical operation recovery workflow"
         ));
@@ -234,13 +168,6 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
         return Err(format!(
             "{relative} must contain exactly one canonical mutation workflow"
         ));
-    }
-    for command in PUBLIC_COMMAND_TEMPLATES {
-        if source.matches(&format!("`{command}`")).count() != 1 {
-            return Err(format!(
-                "{relative} must contain exactly one public command `{command}`"
-            ));
-        }
     }
     for forbidden in [
         "schemaVersion",
@@ -263,9 +190,9 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
         .enumerate()
         .filter_map(|(index, text)| (index % 2 == 1 && text.starts_with("lumin ")).then_some(text))
         .collect::<Vec<_>>();
-    if authored_commands != PUBLIC_COMMAND_TEMPLATES {
+    if authored_commands != ADAPTER_COMMAND_BOOTSTRAPS {
         return Err(format!(
-            "{relative} public command sequence differs from the reviewed adapter contract"
+            "{relative} must defer command syntax to the installed binary"
         ));
     }
     if source != canonical_adapter_source() {

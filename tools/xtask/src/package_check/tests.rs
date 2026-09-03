@@ -106,8 +106,8 @@ fn adapter_rejects_embedded_private_contracts() {
 #[test]
 fn adapter_rejects_reordered_migration_workflow() {
     let source = valid_adapter_source().replace(
-        "  2. Run `lumin store migrate --format json` and no other migration command.\n",
-        "  4. Run `lumin store migrate --format json` and no other migration command.\n",
+        "  2. Run only the lifecycle-store migration command named by installed help.\n",
+        "  4. Run only the lifecycle-store migration command named by installed help.\n",
     );
     let result = validate_adapter(CODEX_SKILL, &source);
     assert!(
@@ -122,8 +122,8 @@ fn adapter_rejects_reordered_migration_workflow() {
 #[test]
 fn adapter_rejects_reordered_operation_recovery_workflow() {
     let source = valid_adapter_source().replace(
-        "  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.\n",
-        "  3. Run `lumin operation show <operation-id> --format json` before any cleanup retry.\n",
+        "  query operation show with that operation ID before any retry. Consume a\n",
+        "  retry cleanup before querying operation show. Consume a\n",
     );
     let result = validate_adapter(CODEX_SKILL, &source);
     assert!(
@@ -136,18 +136,16 @@ fn adapter_rejects_reordered_operation_recovery_workflow() {
 }
 
 #[test]
-fn adapter_rejects_rewritten_public_command_projection() {
-    let source = valid_adapter_source().replace(
-        "lumin runs pin <run-id> --operation-id <operation-id> --reason <reason> --format json",
-        "lumin runs pin <run-id> --operation-id replacement --reason <reason> --format json",
-    );
+fn adapter_rejects_embedded_command_contract() {
+    let source =
+        valid_adapter_source().replace("`lumin <command> --help`", "`lumin audit --format json`");
     let result = validate_adapter(CODEX_SKILL, &source);
     assert!(
         result.is_err(),
-        "rewritten adapter command projection must be rejected"
+        "embedded adapter command contract must be rejected"
     );
     if let Err(error) = result {
-        assert!(error.contains("canonical mutation workflow"));
+        assert!(error.contains("defer command syntax"));
     }
 }
 
@@ -160,7 +158,7 @@ fn adapter_rejects_extra_public_commands() {
     let result = validate_adapter(CODEX_SKILL, &source);
     assert!(result.is_err(), "extra public command must be rejected");
     if let Err(error) = result {
-        assert!(error.contains("public command sequence differs"));
+        assert!(error.contains("defer command syntax"));
     }
 }
 

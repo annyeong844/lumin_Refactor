@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -8,14 +8,175 @@ use super::super::{
     expect_string, expect_success, parse_json, run_binary, run_binary_with_broken_stdout,
     scratch_directory_for, validate_help_output,
 };
-use super::{
-    AUDIT_COMMAND, CACHE_CLEANUP_COMMAND, CLAUDE_SKILL, CODEX_SKILL, EXPLAIN_COMMAND,
-    FINDINGS_COMMAND, GATE_ABANDON_COMMAND, GATE_PRUNE_CONFIRM_COMMAND, GATE_PRUNE_PLAN_COMMAND,
-    HELP_AGENT_COMMAND, MIGRATION_COMMAND, OPERATION_SHOW_COMMAND, OVERVIEW_COMMAND,
-    POST_WRITE_COMMAND, PRE_WRITE_COMMAND, PUBLIC_COMMAND_TEMPLATES, RUN_PIN_COMMAND,
-    RUN_PRUNE_CONFIRM_COMMAND, RUN_PRUNE_PLAN_COMMAND, RUN_UNPIN_COMMAND, read_skill,
-    validate_adapter,
-};
+use super::{CLAUDE_SKILL, CODEX_SKILL, read_skill, validate_adapter};
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum AdapterAction {
+    Audit,
+    Overview,
+    Findings,
+    Explain,
+    PreWrite,
+    PostWrite,
+    GateAbandon,
+    RunPin,
+    RunUnpin,
+    RunPrunePlan,
+    RunPruneConfirm,
+    GatePrunePlan,
+    GatePruneConfirm,
+    CacheCleanup,
+    OperationShow,
+    Migration,
+}
+
+const ADAPTER_ACTIONS: &[AdapterAction] = &[
+    AdapterAction::Audit,
+    AdapterAction::Overview,
+    AdapterAction::Findings,
+    AdapterAction::Explain,
+    AdapterAction::PreWrite,
+    AdapterAction::PostWrite,
+    AdapterAction::GateAbandon,
+    AdapterAction::RunPin,
+    AdapterAction::RunUnpin,
+    AdapterAction::RunPrunePlan,
+    AdapterAction::RunPruneConfirm,
+    AdapterAction::GatePrunePlan,
+    AdapterAction::GatePruneConfirm,
+    AdapterAction::CacheCleanup,
+    AdapterAction::OperationShow,
+    AdapterAction::Migration,
+];
+
+impl AdapterAction {
+    fn selector(self) -> &'static [&'static str] {
+        match self {
+            Self::Audit => &["audit"],
+            Self::Overview => &["overview"],
+            Self::Findings => &["findings"],
+            Self::Explain => &["explain"],
+            Self::PreWrite => &["pre-write"],
+            Self::PostWrite => &["post-write"],
+            Self::GateAbandon => &["gate", "abandon"],
+            Self::RunPin => &["runs", "pin"],
+            Self::RunUnpin => &["runs", "unpin"],
+            Self::RunPrunePlan => &["runs", "prune", "plan"],
+            Self::RunPruneConfirm => &["runs", "prune", "confirm"],
+            Self::GatePrunePlan => &["gate", "prune", "plan"],
+            Self::GatePruneConfirm => &["gate", "prune", "confirm"],
+            Self::CacheCleanup => &["cache", "clean"],
+            Self::OperationShow => &["operation", "show"],
+            Self::Migration => &["store", "migrate"],
+        }
+    }
+}
+
+struct AgentHelp {
+    commands: BTreeMap<AdapterAction, String>,
+}
+
+impl AgentHelp {
+    fn load(relative: &str, source: &str, binary: &Path, root: &Path) -> Result<Self, String> {
+        let arguments = help_bootstrap_arguments(relative, source)?;
+        let help = expect_success(
+            run_adapter_command(binary, root, &arguments),
+            &format!("{relative} help-agent route"),
+        )?;
+        validate_help_output(&help.stdout)?;
+        let stdout = String::from_utf8(help.stdout)
+            .map_err(|error| format!("{relative} help-agent output is not UTF-8: {error}"))?;
+        let mut commands = BTreeMap::new();
+        for action in ADAPTER_ACTIONS {
+            let matches = stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| command_matches(*action, line))
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err(format!(
+                    "{relative} installed help must expose exactly one `{}` command, found {}",
+                    action.selector().join(" "),
+                    matches.len()
+                ));
+            }
+            commands.insert(*action, matches[0].to_owned());
+        }
+        Ok(Self { commands })
+    }
+
+    fn command_arguments(
+        &self,
+        relative: &str,
+        action: AdapterAction,
+        replacements: &[(&str, &str)],
+    ) -> Result<Vec<String>, String> {
+        let command = self.commands.get(&action).ok_or_else(|| {
+            format!(
+                "{relative} installed help omitted `{}`",
+                action.selector().join(" ")
+            )
+        })?;
+        command_arguments(relative, command, replacements)
+    }
+}
+
+fn command_matches(action: AdapterAction, line: &str) -> bool {
+    let tokens = line.split_ascii_whitespace().collect::<Vec<_>>();
+    tokens.first() == Some(&"lumin")
+        && tokens
+            .get(1..1 + action.selector().len())
+            .is_some_and(|candidate| candidate == action.selector())
+}
+
+fn help_bootstrap_arguments(relative: &str, source: &str) -> Result<Vec<String>, String> {
+    let commands = source
+        .split('`')
+        .enumerate()
+        .filter_map(|(index, text)| (index % 2 == 1 && text.starts_with("lumin ")).then_some(text))
+        .collect::<Vec<_>>();
+    let command = commands
+        .first()
+        .filter(|command| **command == "lumin help-agent")
+        .ok_or_else(|| format!("{relative} omitted the installed help bootstrap"))?;
+    command_arguments(relative, command, &[])
+}
+
+fn command_arguments(
+    relative: &str,
+    command: &str,
+    replacements: &[(&str, &str)],
+) -> Result<Vec<String>, String> {
+    let mut tokens = command.split_ascii_whitespace();
+    if tokens.next() != Some("lumin") {
+        return Err(format!("{relative} command does not invoke packaged lumin"));
+    }
+    let mut used = vec![0_usize; replacements.len()];
+    let mut arguments = Vec::new();
+    for token in tokens {
+        if token.starts_with('<') && token.ends_with('>') {
+            let (index, (_, value)) = replacements
+                .iter()
+                .enumerate()
+                .find(|(_, (placeholder, _))| placeholder == &token)
+                .ok_or_else(|| {
+                    format!("{relative} installed command has unresolved placeholder {token}")
+                })?;
+            used[index] += 1;
+            arguments.push((*value).to_owned());
+        } else {
+            arguments.push(token.to_owned());
+        }
+    }
+    for ((placeholder, _), count) in replacements.iter().zip(used) {
+        if count != 1 {
+            return Err(format!(
+                "{relative} installed command must use {placeholder} exactly once"
+            ));
+        }
+    }
+    Ok(arguments)
+}
 
 pub(super) fn validate_binary_agent_contract(binary: &Path) -> Result<(), String> {
     let scratch = scratch_directory_for("skills")?;
@@ -86,9 +247,9 @@ fn execute_adapter_migration_workflow(
     )
     .map_err(|error| format!("cannot write {relative} migration entry: {error}"))?;
 
-    validate_adapter_commands_against_help(relative, source, binary, root)?;
+    let help = AgentHelp::load(relative, source, binary, root)?;
 
-    let audit_arguments = adapter_command_arguments(relative, source, AUDIT_COMMAND, &[])?;
+    let audit_arguments = help.command_arguments(relative, AdapterAction::Audit, &[])?;
     let audit = expect_success(
         run_adapter_command(binary, root, &audit_arguments),
         &format!("{relative} fixture audit"),
@@ -100,7 +261,7 @@ fn execute_adapter_migration_workflow(
         .ok_or_else(|| format!("{relative} fixture audit omitted runId"))?
         .to_owned();
 
-    let overview_arguments = adapter_command_arguments(relative, source, OVERVIEW_COMMAND, &[])?;
+    let overview_arguments = help.command_arguments(relative, AdapterAction::Overview, &[])?;
     let overview = expect_success(
         run_adapter_command(binary, root, &overview_arguments),
         &format!("{relative} overview query"),
@@ -109,10 +270,9 @@ fn execute_adapter_migration_workflow(
     expect_string(&overview_json, "/schemaVersion", "lumin.overview.v2")?;
     expect_string(&overview_json, "/scope/id", &run_id)?;
 
-    let findings_arguments = adapter_command_arguments(
+    let findings_arguments = help.command_arguments(
         relative,
-        source,
-        FINDINGS_COMMAND,
+        AdapterAction::Findings,
         &[("<run-id>", run_id.as_str())],
     )?;
     let findings = expect_success(
@@ -125,10 +285,9 @@ fn execute_adapter_migration_workflow(
         .pointer("/items/0/findingId")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format!("{relative} findings query omitted findingId"))?;
-    let explain_arguments = adapter_command_arguments(
+    let explain_arguments = help.command_arguments(
         relative,
-        source,
-        EXPLAIN_COMMAND,
+        AdapterAction::Explain,
         &[("<run-id>", run_id.as_str()), ("<finding-id>", finding_id)],
     )?;
     let explain = expect_success(
@@ -143,7 +302,7 @@ fn execute_adapter_migration_workflow(
 
     let blocked = run_adapter_command(binary, root, &overview_arguments)?;
     expect_migration_required(&blocked, &format!("{relative} original command"))?;
-    let migration_arguments = adapter_command_arguments(relative, source, MIGRATION_COMMAND, &[])?;
+    let migration_arguments = help.command_arguments(relative, AdapterAction::Migration, &[])?;
     let migration_arguments = command_argument_refs(&migration_arguments);
     expect_migration_ready(
         binary,
@@ -213,8 +372,8 @@ fn execute_adapter_operation_workflow(
     )
     .map_err(|error| format!("cannot write {relative} operation entry: {error}"))?;
 
-    validate_adapter_commands_against_help(relative, source, binary, root)?;
-    let audit_arguments = adapter_command_arguments(relative, source, AUDIT_COMMAND, &[])?;
+    let help = AgentHelp::load(relative, source, binary, root)?;
+    let audit_arguments = help.command_arguments(relative, AdapterAction::Audit, &[])?;
     let audit = expect_success(
         run_adapter_command(binary, root, &audit_arguments),
         &format!("{relative} operation fixture audit"),
@@ -257,10 +416,9 @@ fn execute_adapter_operation_workflow(
         ],
     )?;
 
-    let pre_write_arguments = adapter_command_arguments(
+    let pre_write_arguments = help.command_arguments(
         relative,
-        source,
-        PRE_WRITE_COMMAND,
+        AdapterAction::PreWrite,
         &[
             ("<operation-id>", pre_write_id.as_str()),
             ("<repo-path>", "src/lib.ts"),
@@ -269,7 +427,7 @@ fn execute_adapter_operation_workflow(
     let pre_write = recover_uncertain_mutation(
         relative,
         "pre-write",
-        source,
+        &help,
         binary,
         root,
         &pre_write_arguments,
@@ -278,10 +436,9 @@ fn execute_adapter_operation_workflow(
     let gate_id =
         validate_gate_operation(relative, &pre_write, &pre_write_id, "pre-write", "active")?;
 
-    let post_write_arguments = adapter_command_arguments(
+    let post_write_arguments = help.command_arguments(
         relative,
-        source,
-        POST_WRITE_COMMAND,
+        AdapterAction::PostWrite,
         &[
             ("<gate-id>", gate_id.as_str()),
             ("<operation-id>", post_write_id.as_str()),
@@ -290,7 +447,7 @@ fn execute_adapter_operation_workflow(
     let post_write = recover_uncertain_mutation(
         relative,
         "post-write",
-        source,
+        &help,
         binary,
         root,
         &post_write_arguments,
@@ -304,10 +461,9 @@ fn execute_adapter_operation_workflow(
         "closed",
     )?;
 
-    let second_pre_write_arguments = adapter_command_arguments(
+    let second_pre_write_arguments = help.command_arguments(
         relative,
-        source,
-        PRE_WRITE_COMMAND,
+        AdapterAction::PreWrite,
         &[
             ("<operation-id>", second_pre_write_id.as_str()),
             ("<repo-path>", "src/main.ts"),
@@ -316,7 +472,7 @@ fn execute_adapter_operation_workflow(
     let second_pre_write = recover_uncertain_mutation(
         relative,
         "abandon pre-write",
-        source,
+        &help,
         binary,
         root,
         &second_pre_write_arguments,
@@ -329,10 +485,9 @@ fn execute_adapter_operation_workflow(
         "pre-write",
         "active",
     )?;
-    let abandon_arguments = adapter_command_arguments(
+    let abandon_arguments = help.command_arguments(
         relative,
-        source,
-        GATE_ABANDON_COMMAND,
+        AdapterAction::GateAbandon,
         &[
             ("<gate-id>", abandoned_gate_id.as_str()),
             ("<operation-id>", abandon_id.as_str()),
@@ -342,7 +497,7 @@ fn execute_adapter_operation_workflow(
     let abandon = recover_uncertain_mutation(
         relative,
         "gate abandon",
-        source,
+        &help,
         binary,
         root,
         &abandon_arguments,
@@ -350,10 +505,9 @@ fn execute_adapter_operation_workflow(
     )?;
     validate_gate_operation(relative, &abandon, &abandon_id, "gate-abandon", "abandoned")?;
 
-    let pin_arguments = adapter_command_arguments(
+    let pin_arguments = help.command_arguments(
         relative,
-        source,
-        RUN_PIN_COMMAND,
+        AdapterAction::RunPin,
         &[
             ("<run-id>", run_id.as_str()),
             ("<operation-id>", pin_id.as_str()),
@@ -363,7 +517,7 @@ fn execute_adapter_operation_workflow(
     let pin = recover_uncertain_mutation(
         relative,
         "run pin",
-        source,
+        &help,
         binary,
         root,
         &pin_arguments,
@@ -376,10 +530,9 @@ fn execute_adapter_operation_workflow(
         .ok_or_else(|| format!("{relative} recovered pin result omitted pinId"))?
         .to_owned();
 
-    let unpin_arguments = adapter_command_arguments(
+    let unpin_arguments = help.command_arguments(
         relative,
-        source,
-        RUN_UNPIN_COMMAND,
+        AdapterAction::RunUnpin,
         &[
             ("<pin-id>", retained_pin_id.as_str()),
             ("<operation-id>", unpin_id.as_str()),
@@ -388,7 +541,7 @@ fn execute_adapter_operation_workflow(
     let unpin = recover_uncertain_mutation(
         relative,
         "run unpin",
-        source,
+        &help,
         binary,
         root,
         &unpin_arguments,
@@ -396,10 +549,9 @@ fn execute_adapter_operation_workflow(
     )?;
     validate_retention_operation(relative, &unpin, &unpin_id, "run-unpin", "pin-removed")?;
 
-    let run_plan_arguments = adapter_command_arguments(
+    let run_plan_arguments = help.command_arguments(
         relative,
-        source,
-        RUN_PRUNE_PLAN_COMMAND,
+        AdapterAction::RunPrunePlan,
         &[
             ("<unix-millis>", "9999999999999"),
             ("<operation-id>", run_plan_id.as_str()),
@@ -408,7 +560,7 @@ fn execute_adapter_operation_workflow(
     let run_plan = recover_uncertain_mutation(
         relative,
         "run prune plan",
-        source,
+        &help,
         binary,
         root,
         &run_plan_arguments,
@@ -422,10 +574,9 @@ fn execute_adapter_operation_workflow(
         "retention",
     )?;
     let retained_run_plan_id = retention_plan_id(relative, &run_plan, "run")?;
-    let run_confirm_arguments = adapter_command_arguments(
+    let run_confirm_arguments = help.command_arguments(
         relative,
-        source,
-        RUN_PRUNE_CONFIRM_COMMAND,
+        AdapterAction::RunPruneConfirm,
         &[
             ("<plan-id>", retained_run_plan_id.as_str()),
             ("<operation-id>", run_confirm_id.as_str()),
@@ -434,7 +585,7 @@ fn execute_adapter_operation_workflow(
     let run_confirm = recover_uncertain_mutation(
         relative,
         "run prune confirm",
-        source,
+        &help,
         binary,
         root,
         &run_confirm_arguments,
@@ -448,10 +599,9 @@ fn execute_adapter_operation_workflow(
         "retention",
     )?;
 
-    let gate_plan_arguments = adapter_command_arguments(
+    let gate_plan_arguments = help.command_arguments(
         relative,
-        source,
-        GATE_PRUNE_PLAN_COMMAND,
+        AdapterAction::GatePrunePlan,
         &[
             ("<unix-millis>", "9999999999999"),
             ("<operation-id>", gate_plan_id.as_str()),
@@ -460,7 +610,7 @@ fn execute_adapter_operation_workflow(
     let gate_plan = recover_uncertain_mutation(
         relative,
         "gate prune plan",
-        source,
+        &help,
         binary,
         root,
         &gate_plan_arguments,
@@ -474,10 +624,9 @@ fn execute_adapter_operation_workflow(
         "retention",
     )?;
     let retained_gate_plan_id = retention_plan_id(relative, &gate_plan, "gate")?;
-    let gate_confirm_arguments = adapter_command_arguments(
+    let gate_confirm_arguments = help.command_arguments(
         relative,
-        source,
-        GATE_PRUNE_CONFIRM_COMMAND,
+        AdapterAction::GatePruneConfirm,
         &[
             ("<plan-id>", retained_gate_plan_id.as_str()),
             ("<operation-id>", gate_confirm_id.as_str()),
@@ -486,7 +635,7 @@ fn execute_adapter_operation_workflow(
     let gate_confirm = recover_uncertain_mutation(
         relative,
         "gate prune confirm",
-        source,
+        &help,
         binary,
         root,
         &gate_confirm_arguments,
@@ -512,16 +661,15 @@ fn execute_adapter_operation_workflow(
         return Err(format!("{relative} cache fixture writer emitted stdout"));
     }
 
-    let cleanup_arguments = adapter_command_arguments(
+    let cleanup_arguments = help.command_arguments(
         relative,
-        source,
-        CACHE_CLEANUP_COMMAND,
+        AdapterAction::CacheCleanup,
         &[("<operation-id>", cleanup_id.as_str())],
     )?;
     let response = recover_uncertain_mutation(
         relative,
         "cache cleanup",
-        source,
+        &help,
         binary,
         root,
         &cleanup_arguments,
@@ -571,7 +719,7 @@ fn require_unique_operation_ids<'a>(
 fn recover_uncertain_mutation(
     relative: &str,
     label: &str,
-    source: &str,
+    help: &AgentHelp,
     binary: &Path,
     root: &Path,
     mutation_arguments: &[String],
@@ -590,10 +738,9 @@ fn recover_uncertain_mutation(
         ));
     }
 
-    let show_arguments = adapter_command_arguments(
+    let show_arguments = help.command_arguments(
         relative,
-        source,
-        OPERATION_SHOW_COMMAND,
+        AdapterAction::OperationShow,
         &[("<operation-id>", operation_id)],
     )?;
     let shown = expect_success(
@@ -667,55 +814,6 @@ fn retention_plan_id(
         .ok_or_else(|| format!("{relative} recovered {domain} plan omitted planId"))
 }
 
-fn adapter_command_arguments(
-    relative: &str,
-    source: &str,
-    command_template: &str,
-    replacements: &[(&str, &str)],
-) -> Result<Vec<String>, String> {
-    let marker = format!("`{command_template}`");
-    if source.matches(&marker).count() != 1 {
-        return Err(format!(
-            "{relative} must contain exactly one adapter command `{command_template}`"
-        ));
-    }
-    let start = source
-        .find(&marker)
-        .ok_or_else(|| format!("{relative} omitted adapter command `{command_template}`"))?;
-    let authored = &source[start + 1..start + marker.len() - 1];
-    let mut tokens = authored.split_ascii_whitespace();
-    if tokens.next() != Some("lumin") {
-        return Err(format!(
-            "{relative} adapter command does not invoke packaged lumin"
-        ));
-    }
-    let mut used = vec![0_usize; replacements.len()];
-    let mut arguments = Vec::new();
-    for token in tokens {
-        if token.starts_with('<') && token.ends_with('>') {
-            let (index, (_, value)) = replacements
-                .iter()
-                .enumerate()
-                .find(|(_, (placeholder, _))| placeholder == &token)
-                .ok_or_else(|| {
-                    format!("{relative} adapter command has unresolved placeholder {token}")
-                })?;
-            used[index] += 1;
-            arguments.push((*value).to_owned());
-        } else {
-            arguments.push(token.to_owned());
-        }
-    }
-    for ((placeholder, _), count) in replacements.iter().zip(used) {
-        if count != 1 {
-            return Err(format!(
-                "{relative} adapter command must use {placeholder} exactly once"
-            ));
-        }
-    }
-    Ok(arguments)
-}
-
 fn run_adapter_command(
     binary: &Path,
     root: &Path,
@@ -727,33 +825,4 @@ fn run_adapter_command(
 
 fn command_argument_refs(arguments: &[String]) -> Vec<&str> {
     arguments.iter().map(String::as_str).collect()
-}
-
-fn validate_adapter_commands_against_help(
-    relative: &str,
-    source: &str,
-    binary: &Path,
-    root: &Path,
-) -> Result<(), String> {
-    let help_arguments = adapter_command_arguments(relative, source, HELP_AGENT_COMMAND, &[])?;
-    let help = expect_success(
-        run_adapter_command(binary, root, &help_arguments),
-        &format!("{relative} help-agent route"),
-    )?;
-    validate_help_output(&help.stdout)?;
-    let stdout = String::from_utf8(help.stdout)
-        .map_err(|error| format!("{relative} help-agent output is not UTF-8: {error}"))?;
-    for command in PUBLIC_COMMAND_TEMPLATES {
-        if stdout
-            .lines()
-            .filter(|line| line.trim() == *command)
-            .count()
-            != 1
-        {
-            return Err(format!(
-                "{relative} command `{command}` is not one exact public help-agent command"
-            ));
-        }
-    }
-    Ok(())
 }

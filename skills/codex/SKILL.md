@@ -6,35 +6,32 @@ description: Use the packaged native Lumin CLI to audit repositories, query grou
 # Lumin
 
 Run `lumin help-agent` from the repository root before choosing command syntax.
-Treat that installed-binary output as the command and recovery contract.
+Use `lumin <command> --help` when a returned cursor or workflow step needs
+options not shown in the short agent help. The installed binary is the only
+command-syntax and DTO authority.
 
 - Use only the packaged `lumin` binary and its public JSON responses.
-- Follow these public command templates exactly; they are checked projections
-  of the installed binary's agent help, not a second command contract:
-  1. `lumin audit --jobs 1 --format json`
-  2. `lumin overview --format json`
-  3. `lumin findings --run <run-id> --area dead-code --format json`
-  4. `lumin explain --run <run-id> <finding-id> --format json`
-- Generate and retain a unique operation ID before each command below. Retain
-  every returned gate, run, plan, and pin ID needed by the next command:
-  1. `lumin pre-write --operation-id <operation-id> --path <repo-path> --format json`
-  2. `lumin post-write <gate-id> --operation-id <operation-id> --format json`
-  3. `lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json`
-  4. `lumin runs pin <run-id> --operation-id <operation-id> --reason <reason> --format json`
-  5. `lumin runs unpin <pin-id> --operation-id <operation-id> --format json`
-  6. `lumin runs prune plan --before <unix-millis> --operation-id <operation-id> --format json`
-  7. `lumin runs prune confirm <plan-id> --operation-id <operation-id> --format json`
-  8. `lumin gate prune plan --terminal-before <unix-millis> --operation-id <operation-id> --format json`
-  9. `lumin gate prune confirm <plan-id> --operation-id <operation-id> --format json`
+- Audit with the deterministic single-worker setting, retain its concrete run
+  ID, then query overview, relevant findings, and explanations for chosen IDs.
+  When a bounded response has a `nextCursor`, use that command's installed help
+  and follow the cursor until `truncated` is false when exhaustive output is
+  required.
+- Generate and retain a unique operation ID before every gate, retention, or
+  cache-cleanup mutation. Retain every returned gate, run, plan, and pin ID.
+- For a write, request pre-write authorization for the exact repository paths,
+  edit only after an authorizing decision, then close that gate with post-write.
+  Use gate abandon with its returned gate ID when the authorized edit is
+  cancelled.
+- For retention, pin and unpin by returned IDs. Create a plan before confirming
+  run or terminal-gate pruning, and confirm only the exact returned plan ID.
 - If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.
-- For uncertain cache-cleanup delivery, follow this exact public recovery sequence:
-  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.
-  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.
-  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.
-  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by the public agent help; never mint a replacement ID.
+- For uncertain cache-cleanup delivery, preserve the exact original request and
+  query operation show with that operation ID before any retry. Consume a
+  matching committed result without rerunning cleanup; otherwise resume only as
+  instructed by installed help, with the same ID and no replacement ID.
 - When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:
   1. Preserve the original public command and all arguments unchanged.
-  2. Run `lumin store migrate --format json` and no other migration command.
+  2. Run only the lifecycle-store migration command named by installed help.
   3. Accept only the exact migration DTO printed by the public agent help.
   4. Retry the preserved original public command with the same arguments.
 - Never read, edit, infer, or repair `.lumin` internals. Missing, failed, stale,
