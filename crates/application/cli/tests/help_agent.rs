@@ -48,6 +48,12 @@ fn help_agent_owns_the_recovery_workflow_without_creating_state()
     assert!(
         output
             .stdout
+            .contains("Only decision values allow and allow-with-warnings authorize editing.")
+    );
+    assert!(output.stdout.contains("incomplete, and stale do not."));
+    assert!(
+        output
+            .stdout
             .contains("status, result, and lastDeliveryStatus")
     );
     assert!(

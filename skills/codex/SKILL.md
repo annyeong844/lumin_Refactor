@@ -20,7 +20,8 @@ command-syntax and DTO authority.
 - Generate and retain a unique operation ID before every gate, retention, or
   cache-cleanup mutation. Retain every returned gate, run, plan, and pin ID.
 - For a write, request pre-write authorization for the exact repository paths,
-  edit only after an authorizing decision, then close that gate with post-write.
+  edit only after decision `allow` or `allow-with-warnings`; `deny`, `incomplete`,
+  and `stale` never authorize editing. Then close that gate with post-write.
   Use gate abandon with its returned gate ID when the authorized edit is
   cancelled.
 - For retention, pin and unpin by returned IDs. Create a plan before confirming

@@ -23,8 +23,8 @@ Write gate
   Rust is inferred from planned .rs paths. Add
   --capability-at <declared-repo-path> <shape|clone|type-escape> for those typed intents.
   An unavailable requested owner returns an incomplete gate; never substitute another lane.
-  Apply edits only when the returned decision authorizes them, and retain the
-  returned gateId.
+  Only decision values allow and allow-with-warnings authorize editing. Deny,
+  incomplete, and stale do not. Retain the returned gateId.
   lumin post-write <gate-id> --operation-id <operation-id> --format json
   lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json
 

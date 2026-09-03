@@ -709,8 +709,14 @@ fn execute_adapter_operation_workflow(
         &pre_write_arguments,
         &pre_write_id,
     )?;
-    let gate_id =
-        validate_gate_operation(relative, &pre_write, &pre_write_id, "pre-write", "active")?;
+    let gate_id = validate_gate_operation(
+        relative,
+        &pre_write,
+        &pre_write_id,
+        "pre-write",
+        "active",
+        &["allow", "allow-with-warnings"],
+    )?;
 
     let post_write_arguments = help.command_arguments(
         relative,
@@ -735,6 +741,7 @@ fn execute_adapter_operation_workflow(
         &post_write_id,
         "post-write",
         "closed",
+        &["allow", "allow-with-warnings"],
     )?;
 
     let second_pre_write_arguments = help.command_arguments(
@@ -760,6 +767,7 @@ fn execute_adapter_operation_workflow(
         &second_pre_write_id,
         "pre-write",
         "active",
+        &["allow", "allow-with-warnings"],
     )?;
     let abandon_arguments = help.command_arguments(
         relative,
@@ -779,7 +787,14 @@ fn execute_adapter_operation_workflow(
         &abandon_arguments,
         &abandon_id,
     )?;
-    validate_gate_operation(relative, &abandon, &abandon_id, "gate-abandon", "abandoned")?;
+    validate_gate_operation(
+        relative,
+        &abandon,
+        &abandon_id,
+        "gate-abandon",
+        "abandoned",
+        &["deny"],
+    )?;
 
     let pin_arguments = help.command_arguments(
         relative,
@@ -1043,6 +1058,7 @@ fn validate_gate_operation(
     operation_id: &str,
     kind: &str,
     lifecycle: &str,
+    expected_decisions: &[&str],
 ) -> Result<String, String> {
     expect_string(response, "/schemaVersion", "lumin.operation.v1")?;
     expect_string(response, "/operationId", operation_id)?;
@@ -1051,6 +1067,15 @@ fn validate_gate_operation(
     expect_string(response, "/result/schemaVersion", "lumin.gate-mutation.v2")?;
     expect_string(response, "/result/operationId", operation_id)?;
     expect_string(response, "/result/lifecycle", lifecycle)?;
+    let decision = response
+        .pointer("/result/decision")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{relative} recovered {kind} result omitted decision"))?;
+    if !expected_decisions.contains(&decision) {
+        return Err(format!(
+            "{relative} recovered {kind} decision {decision} was not one of {expected_decisions:?}"
+        ));
+    }
     let gate_id = response
         .pointer("/result/gateId")
         .and_then(serde_json::Value::as_str)
