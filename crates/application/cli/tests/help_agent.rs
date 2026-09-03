@@ -17,9 +17,10 @@ fn help_agent_owns_the_recovery_workflow_without_creating_state()
     assert!(output.stdout.starts_with("Lumin agent workflow\n"));
     for command in [
         "lumin audit --jobs 1 --format json",
-        "lumin overview --format json",
+        "lumin overview --run <run-id> --format json",
         "lumin findings --run <run-id> --area dead-code --format json",
         "lumin explain --run <run-id> <finding-id> --format json",
+        "lumin related --run <run-id> <finding-id> --format json",
         "lumin pre-write --operation-id <operation-id> --path <repo-path> --format json",
         "lumin post-write <gate-id> --operation-id <operation-id> --format json",
         "lumin gate abandon <gate-id> --operation-id <operation-id> --reason <reason> --format json",
@@ -94,7 +95,7 @@ fn command_help_exposes_owned_syntax_without_creating_state()
         ),
         (
             "files",
-            "lumin files --run <run-id> <repo-path> --cursor <cursor> --format json",
+            "lumin files --run <run-id> --cursor <cursor> --format json -- <repo-path>",
         ),
         (
             "capabilities",
@@ -162,6 +163,10 @@ fn help_agent_query_examples_execute_through_the_public_binary()
         root.path().join("src/main.ts"),
         "import { used } from './lib.js'; console.log(used);\n",
     )?;
+    fs::write(
+        root.path().join("--generated.ts"),
+        "console.log('generated');\n",
+    )?;
 
     let help = run(root.path(), &["help-agent"])?;
     assert_stage_status("help-agent", &help, 0);
@@ -179,6 +184,38 @@ fn help_agent_query_examples_execute_through_the_public_binary()
     let audit = run(root.path(), &audit_refs)?;
     assert_stage_status("audit", &audit, 0);
     let run_id = support::field(&audit.stdout, "runId")?;
+
+    let files_help = run(root.path(), &["files", "--help"])?;
+    assert_stage_status("files command help", &files_help, 0);
+    let option_path_line = files_help
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            line.starts_with("lumin files ")
+                && line.ends_with("-- <repo-path>")
+                && !line.contains("--cursor")
+        })
+        .ok_or("files command help omitted its option-shaped path form")?;
+    let option_path_arguments = option_path_line
+        .replace("<run-id>", &run_id)
+        .replace("<repo-path>", "--generated.ts")
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let option_path_refs = option_path_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let option_path = run(root.path(), &option_path_refs)?;
+    assert_stage_status("option-shaped files query", &option_path, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&option_path.stdout)?
+            .pointer("/sourceContext/path/display")
+            .and_then(Value::as_str),
+        Some("--generated.ts")
+    );
 
     let findings_line = help
         .stdout

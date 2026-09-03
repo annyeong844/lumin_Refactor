@@ -12,7 +12,8 @@ command-syntax and DTO authority.
 
 - Use only the packaged `lumin` binary and its public JSON responses.
 - Audit with the deterministic single-worker setting, retain its concrete run
-  ID, then query overview, relevant findings, and explanations for chosen IDs.
+  ID, then query its overview, relevant findings, explanations for chosen IDs,
+  and related evidence when relationships matter.
   When a bounded response has a `nextCursor`, use that command's installed help
   and follow the cursor until `truncated` is false when exhaustive output is
   required.

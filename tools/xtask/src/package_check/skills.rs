@@ -25,7 +25,8 @@ const ADAPTER_PREFIX: &str = concat!(
 );
 pub(super) const QUERY_WORKFLOW: &str = concat!(
     "- Audit with the deterministic single-worker setting, retain its concrete run\n",
-    "  ID, then query overview, relevant findings, and explanations for chosen IDs.\n",
+    "  ID, then query its overview, relevant findings, explanations for chosen IDs,\n",
+    "  and related evidence when relationships matter.\n",
     "  When a bounded response has a `nextCursor`, use that command's installed help\n",
     "  and follow the cursor until `truncated` is false when exhaustive output is\n",
     "  required.\n",

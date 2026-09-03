@@ -9,9 +9,10 @@ Read before acting
 
 Audit and query
   lumin audit --jobs 1 --format json
-  lumin overview --format json
+  lumin overview --run <run-id> --format json
   lumin findings --run <run-id> --area dead-code --format json
   lumin explain --run <run-id> <finding-id> --format json
+  lumin related --run <run-id> <finding-id> --format json
   Retain concrete run, finding, gate, plan, pin, and operation IDs returned by
   the binary. Follow nextCursor until truncated is false when exhaustive output
   is required.
@@ -96,7 +97,10 @@ First page
   lumin files --run <run-id> <repo-path> --format json
 Continuation
   lumin files --run <run-id> <repo-path> --cursor <cursor> --format json
-  Use -- before an option-shaped repository path."#;
+Option-shaped path
+  lumin files --run <run-id> --format json -- <repo-path>
+Option-shaped path continuation
+  lumin files --run <run-id> --cursor <cursor> --format json -- <repo-path>"#;
 
 const CAPABILITIES_HELP: &str = r#"Lumin command help: capabilities
 Binary inventory

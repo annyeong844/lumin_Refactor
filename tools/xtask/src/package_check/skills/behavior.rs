@@ -16,6 +16,7 @@ enum AdapterAction {
     Overview,
     Findings,
     Explain,
+    Related,
     PreWrite,
     PostWrite,
     GateAbandon,
@@ -35,6 +36,7 @@ const ADAPTER_ACTIONS: &[AdapterAction] = &[
     AdapterAction::Overview,
     AdapterAction::Findings,
     AdapterAction::Explain,
+    AdapterAction::Related,
     AdapterAction::PreWrite,
     AdapterAction::PostWrite,
     AdapterAction::GateAbandon,
@@ -56,6 +58,7 @@ impl AdapterAction {
             Self::Overview => &["overview"],
             Self::Findings => &["findings"],
             Self::Explain => &["explain"],
+            Self::Related => &["related"],
             Self::PreWrite => &["pre-write"],
             Self::PostWrite => &["post-write"],
             Self::GateAbandon => &["gate", "abandon"],
@@ -403,7 +406,29 @@ fn execute_adapter_migration_workflow(
         .ok_or_else(|| format!("{relative} fixture audit omitted runId"))?
         .to_owned();
 
-    let overview_arguments = help.command_arguments(relative, AdapterAction::Overview, &[])?;
+    let intervening_audit = expect_success(
+        run_adapter_command(binary, root, &audit_arguments),
+        &format!("{relative} intervening audit"),
+    )?;
+    let intervening_run_id = parse_json(
+        &format!("{relative} intervening audit"),
+        &intervening_audit.stdout,
+    )?
+    .pointer("/runId")
+    .and_then(serde_json::Value::as_str)
+    .ok_or_else(|| format!("{relative} intervening audit omitted runId"))?
+    .to_owned();
+    if intervening_run_id == run_id {
+        return Err(format!(
+            "{relative} intervening audit did not publish a distinct latest run"
+        ));
+    }
+
+    let overview_arguments = help.command_arguments(
+        relative,
+        AdapterAction::Overview,
+        &[("<run-id>", run_id.as_str())],
+    )?;
     let overview = expect_success(
         run_adapter_command(binary, root, &overview_arguments),
         &format!("{relative} overview query"),
@@ -523,6 +548,31 @@ fn execute_adapter_migration_workflow(
     let explain_json = parse_json(&format!("{relative} explain query"), &explain.stdout)?;
     expect_string(&explain_json, "/schemaVersion", "lumin.run-explain.v1")?;
     expect_string(&explain_json, "/finding/findingId", finding_id)?;
+
+    let related_arguments = help.command_arguments(
+        relative,
+        AdapterAction::Related,
+        &[("<run-id>", run_id.as_str()), ("<finding-id>", finding_id)],
+    )?;
+    let related = expect_success(
+        run_adapter_command(binary, root, &related_arguments),
+        &format!("{relative} related-evidence query"),
+    )?;
+    let related_json = parse_json(
+        &format!("{relative} related-evidence query"),
+        &related.stdout,
+    )?;
+    expect_string(&related_json, "/schemaVersion", "lumin.collection.v1")?;
+    expect_string(&related_json, "/ordering", "relations.v1")?;
+    if related_json
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .is_none()
+    {
+        return Err(format!(
+            "{relative} related-evidence query omitted its bounded collection"
+        ));
+    }
 
     downgrade_store_as_prior(fixture_binary, root, None)?;
 
