@@ -142,6 +142,75 @@ fn help_bootstrap_arguments(relative: &str, source: &str) -> Result<Vec<String>,
     command_arguments(relative, command, &[])
 }
 
+fn command_help_bootstrap_arguments(
+    relative: &str,
+    source: &str,
+    action: AdapterAction,
+) -> Result<Vec<String>, String> {
+    let commands = source
+        .split('`')
+        .enumerate()
+        .filter_map(|(index, text)| (index % 2 == 1 && text.starts_with("lumin ")).then_some(text))
+        .collect::<Vec<_>>();
+    let command = commands
+        .get(1)
+        .filter(|command| **command == "lumin <command> --help")
+        .ok_or_else(|| format!("{relative} omitted the installed command-help bootstrap"))?;
+    let mut arguments = Vec::new();
+    for token in command.split_ascii_whitespace().skip(1) {
+        if token == "<command>" {
+            arguments.extend(action.selector().iter().map(|value| (*value).to_owned()));
+        } else {
+            arguments.push(token.to_owned());
+        }
+    }
+    Ok(arguments)
+}
+
+fn continuation_arguments_from_installed_help(
+    relative: &str,
+    source: &str,
+    binary: &Path,
+    root: &Path,
+    action: AdapterAction,
+    replacements: &[(&str, &str)],
+) -> Result<Vec<String>, String> {
+    let help_arguments = command_help_bootstrap_arguments(relative, source, action)?;
+    let help = expect_success(
+        run_adapter_command(binary, root, &help_arguments),
+        &format!(
+            "{relative} installed {} command help",
+            action.selector().join(" ")
+        ),
+    )?;
+    let stdout = String::from_utf8(help.stdout).map_err(|error| {
+        format!(
+            "{relative} installed {} command help is not UTF-8: {error}",
+            action.selector().join(" ")
+        )
+    })?;
+    let matches = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            command_matches(action, line)
+                && line
+                    .split_ascii_whitespace()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .any(|pair| pair == ["--cursor", "<cursor>"])
+        })
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(format!(
+            "{relative} installed {} help must expose exactly one cursor continuation, found {}",
+            action.selector().join(" "),
+            matches.len()
+        ));
+    }
+    command_arguments(relative, matches[0], replacements)
+}
+
 fn command_arguments(
     relative: &str,
     command: &str,
@@ -183,7 +252,26 @@ pub(super) fn validate_binary_agent_contract(binary: &Path) -> Result<(), String
     fs::create_dir(&scratch)
         .map_err(|error| format!("cannot create package-check scratch directory: {error}"))?;
     let result = expect_success(run_binary(binary, &scratch, &["help-agent"]), "help-agent")
-        .and_then(|output| validate_help_output(&output.stdout));
+        .and_then(|output| validate_help_output(&output.stdout))
+        .and_then(|()| {
+            expect_success(
+                run_binary(binary, &scratch, &["findings", "--help"]),
+                "findings command help",
+            )
+        })
+        .and_then(|output| {
+            let stdout = String::from_utf8(output.stdout)
+                .map_err(|error| format!("packaged findings help is not UTF-8: {error}"))?;
+            let required =
+                "lumin findings --run <run-id> --area dead-code --cursor <cursor> --format json";
+            if stdout.lines().any(|line| line.trim() == required) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "packaged findings help omitted its continuation form: {stdout}"
+                ))
+            }
+        });
     let created_state = scratch.join(".lumin").exists();
     let cleanup = fs::remove_dir_all(&scratch)
         .map_err(|error| format!("cannot remove package-check scratch directory: {error}"));
@@ -236,11 +324,14 @@ fn execute_adapter_migration_workflow(
         br#"{"name":"lumin-skill-migration","private":true,"type":"module"}"#,
     )
     .map_err(|error| format!("cannot write {relative} migration manifest: {error}"))?;
-    fs::write(
-        root.join("src/lib.ts"),
-        b"export const used = 1; export const dead = 2;\n",
-    )
-    .map_err(|error| format!("cannot write {relative} migration source: {error}"))?;
+    let lib_source = format!(
+        "export const used = 1;\n{}",
+        (0..101)
+            .map(|index| format!("export const dead{index:03} = {index};\n"))
+            .collect::<String>()
+    );
+    fs::write(root.join("src/lib.ts"), lib_source)
+        .map_err(|error| format!("cannot write {relative} migration source: {error}"))?;
     fs::write(
         root.join("src/main.ts"),
         b"import { used } from './lib.js'; console.log(used);\n",
@@ -281,6 +372,90 @@ fn execute_adapter_migration_workflow(
     )?;
     let findings_json = parse_json(&format!("{relative} findings query"), &findings.stdout)?;
     expect_string(&findings_json, "/schemaVersion", "lumin.collection.v1")?;
+    if findings_json
+        .get("total")
+        .and_then(serde_json::Value::as_u64)
+        != Some(101)
+        || findings_json
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len)
+            != Some(100)
+        || findings_json
+            .get("truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+    {
+        return Err(format!(
+            "{relative} findings fixture did not produce the required first page: {findings_json}"
+        ));
+    }
+    let cursor = findings_json
+        .get("nextCursor")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{relative} findings first page omitted nextCursor"))?;
+    let continuation_arguments = continuation_arguments_from_installed_help(
+        relative,
+        source,
+        binary,
+        root,
+        AdapterAction::Findings,
+        &[("<run-id>", run_id.as_str()), ("<cursor>", cursor)],
+    )?;
+    let continuation = expect_success(
+        run_adapter_command(binary, root, &continuation_arguments),
+        &format!("{relative} findings continuation"),
+    )?;
+    let continuation_json = parse_json(
+        &format!("{relative} findings continuation"),
+        &continuation.stdout,
+    )?;
+    expect_string(&continuation_json, "/schemaVersion", "lumin.collection.v1")?;
+    if continuation_json
+        .get("total")
+        .and_then(serde_json::Value::as_u64)
+        != Some(101)
+        || continuation_json
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len)
+            != Some(1)
+        || continuation_json
+            .get("truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        || continuation_json
+            .get("nextCursor")
+            .is_some_and(|value| !value.is_null())
+    {
+        return Err(format!(
+            "{relative} installed command help did not drive the exact final findings page: {continuation_json}"
+        ));
+    }
+    let finding_ids = findings_json
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            continuation_json
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+        .map(|item| {
+            item.get("findingId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{relative} findings page item omitted findingId"))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if finding_ids.len() != 101 {
+        return Err(format!(
+            "{relative} findings continuation skipped or repeated an item"
+        ));
+    }
     let finding_id = findings_json
         .pointer("/items/0/findingId")
         .and_then(serde_json::Value::as_str)
