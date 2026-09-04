@@ -1,7 +1,7 @@
 mod tables;
 mod validation;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
     CacheCleanupDeliveryCompletion, CacheCleanupDeliveryOutcome, CacheCleanupExecutionLease,
@@ -14,12 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{RunCatalogRecord, StoreError, StoreGeneration, backend_error, io_error};
 
-use self::tables::{read_legacy_snapshot, read_snapshot, write_snapshot};
+use self::tables::{read_legacy_snapshot, read_snapshot, read_table_inventory, write_snapshot};
 use self::validation::validate_legacy_referential_closure;
 use super::super::platform::{EntryAccess, EntryKind, HeldEntry, UnpublishedFile};
 use super::super::store_header::{
-    MigrationProvenanceAnchor, initialize_store_with_anchor, verify_prior_store_header,
-    verify_store_header_anchor, verify_validation_receipt_set_read,
+    MigrationProvenanceAnchor, initialize_store_with_anchor, read_store_header_bytes_from_read,
+    verify_prior_store_header, verify_store_header_anchor, verify_validation_receipt_set_read,
 };
 use super::super::{MigrationDatabase, NamespaceGuard, detached_database, require_state_volume};
 
@@ -55,6 +55,40 @@ pub(super) struct CurrentStore {
     pub(super) generation: StoreGeneration,
     pub(super) anchor: Option<MigrationProvenanceAnchor>,
     pub(super) snapshot: LogicalStoreSnapshot,
+    observation_metadata: CurrentStoreObservationMetadata,
+}
+
+struct ValidatedCurrentDatabase {
+    snapshot: LogicalStoreSnapshot,
+    observation_metadata: CurrentStoreObservationMetadata,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CurrentStoreObservationMetadata {
+    store_header: Vec<u8>,
+    table_names: BTreeSet<String>,
+    multimap_table_names: BTreeSet<String>,
+}
+
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompleteLogicalStoreObservation<'a> {
+    store_header: &'a [u8],
+    table_names: &'a BTreeSet<String>,
+    multimap_table_names: &'a BTreeSet<String>,
+    records: &'a LogicalStoreSnapshot,
+}
+
+impl CurrentStore {
+    pub(super) fn has_same_logical_observation(&self, other: &Self) -> bool {
+        self.snapshot == other.snapshot && self.observation_metadata == other.observation_metadata
+    }
 }
 
 pub(super) fn open_legacy_canonical(guard: &NamespaceGuard) -> Result<LegacyStore, StoreError> {
@@ -153,7 +187,7 @@ pub(super) fn open_current_canonical(guard: &NamespaceGuard) -> Result<CurrentSt
     require_state_volume(&entry, &guard.state_directory, "lifecycle.store")?;
     let database = detached_database(guard, &entry)?;
     let (generation, anchor) = verify_store_header_anchor(&database, &guard.state.binding)?;
-    let snapshot = validate_current_database(guard, &database, generation, anchor.as_ref(), None)?;
+    let validated = validate_current_database(guard, &database, generation, anchor.as_ref(), None)?;
     drop(database);
     entry.validate_path(
         &path,
@@ -166,7 +200,8 @@ pub(super) fn open_current_canonical(guard: &NamespaceGuard) -> Result<CurrentSt
         entry,
         generation,
         anchor,
-        snapshot,
+        snapshot: validated.snapshot,
+        observation_metadata: validated.observation_metadata,
     })
 }
 
@@ -199,9 +234,9 @@ pub(super) fn read_current_entry(
     expected_anchor: Option<&MigrationProvenanceAnchor>,
 ) -> Result<LogicalStoreSnapshot, StoreError> {
     let database = detached_database(guard, entry)?;
-    let snapshot = validate_current_database(guard, &database, generation, expected_anchor, None)?;
+    let validated = validate_current_database(guard, &database, generation, expected_anchor, None)?;
     drop(database);
-    Ok(snapshot)
+    Ok(validated.snapshot)
 }
 
 fn validate_current_database(
@@ -210,7 +245,7 @@ fn validate_current_database(
     generation: StoreGeneration,
     expected_anchor: Option<&MigrationProvenanceAnchor>,
     expected_snapshot: Option<&LogicalStoreSnapshot>,
-) -> Result<LogicalStoreSnapshot, StoreError> {
+) -> Result<ValidatedCurrentDatabase, StoreError> {
     let (observed_generation, observed_anchor) =
         verify_store_header_anchor(database, &guard.state.binding)?;
     if observed_generation != generation {
@@ -225,6 +260,8 @@ fn validate_current_database(
         ));
     }
     let read = database.begin_read().map_err(backend_error)?;
+    let store_header = read_store_header_bytes_from_read(&read)?;
+    let (table_names, multimap_table_names) = read_table_inventory(&read)?;
     verify_validation_receipt_set_read(&read, &guard.state.binding, generation)?;
     let snapshot = read_snapshot(&read)?;
     if expected_snapshot.is_some_and(|expected| expected != &snapshot) {
@@ -232,7 +269,32 @@ fn validate_current_database(
             "migration target logical snapshot changed".to_owned(),
         ));
     }
-    Ok(snapshot)
+    Ok(ValidatedCurrentDatabase {
+        snapshot,
+        observation_metadata: CurrentStoreObservationMetadata {
+            store_header,
+            table_names,
+            multimap_table_names,
+        },
+    })
+}
+
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
+impl CurrentStore {
+    pub(super) fn complete_logical_observation(&self) -> Result<Vec<u8>, StoreError> {
+        serde_json::to_vec(&CompleteLogicalStoreObservation {
+            store_header: &self.observation_metadata.store_header,
+            table_names: &self.observation_metadata.table_names,
+            multimap_table_names: &self.observation_metadata.multimap_table_names,
+            records: &self.snapshot,
+        })
+        .map_err(crate::serialization_error)
+    }
 }
 
 impl LogicalStoreSnapshot {

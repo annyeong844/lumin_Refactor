@@ -160,12 +160,30 @@ pub(super) fn require_idle(guard: &NamespaceGuard) -> Result<(), StoreError> {
     }
 }
 
-#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
 pub(super) fn current_logical_snapshot_for_test(
     guard: &NamespaceGuard,
 ) -> Result<Vec<u8>, StoreError> {
     let current = open_current_canonical(guard)?;
     serde_json::to_vec(&current.snapshot).map_err(crate::serialization_error)
+}
+
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
+pub(super) fn complete_logical_observation_for_test(
+    guard: &NamespaceGuard,
+) -> Result<Vec<u8>, StoreError> {
+    let current = open_current_canonical(guard)?;
+    current.complete_logical_observation()
 }
 
 #[cfg(test)]
@@ -389,7 +407,7 @@ fn revalidate_current_canonical(
     if observed.entry.identity() != expected.entry.identity()
         || observed.generation != expected.generation
         || observed.anchor != expected.anchor
-        || observed.snapshot != expected.snapshot
+        || !observed.has_same_logical_observation(expected)
     {
         return Err(StoreError::Integrity(
             "lifecycle.store changed after external reference validation".to_owned(),
