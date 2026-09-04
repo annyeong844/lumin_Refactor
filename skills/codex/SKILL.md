@@ -6,22 +6,37 @@ description: Use the packaged native Lumin CLI to audit repositories, query grou
 # Lumin
 
 Run `lumin help-agent` from the repository root before choosing command syntax.
-Treat that installed-binary output as the command and recovery contract.
+Use `lumin <command> --help` when a returned cursor or workflow step needs
+options not shown in the short agent help. The installed binary is the only
+command-syntax and DTO authority.
 
 - Use only the packaged `lumin` binary and its public JSON responses.
+- Audit with the deterministic single-worker setting, retain its concrete run
+  ID, then query its overview, relevant findings, explanations for chosen IDs,
+  and related evidence when relationships matter.
+  When a bounded response has a `nextCursor`, use that command's installed help
+  and follow the cursor until `truncated` is false when exhaustive output is
+  required.
 - Generate and retain a unique operation ID before every gate, retention, or
-  cache-cleanup mutation. Retain every returned gate, run, finding, plan, and
-  pin ID needed by the next public command.
+  cache-cleanup mutation. Retain every returned gate, run, plan, and pin ID.
+- For a write, request pre-write authorization for the exact repository paths,
+  edit only after decision `allow` or `allow-with-warnings`; `deny`, `incomplete`,
+  and `stale` never authorize editing. Then close that gate with post-write.
+  Use gate abandon with its returned gate ID when the authorized edit is
+  cancelled.
+- For retention, pin and unpin by returned IDs. Create a plan before confirming
+  run or terminal-gate pruning, and confirm only the exact returned plan ID.
 - If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.
-- For uncertain cache-cleanup delivery, follow this exact public recovery sequence:
-  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.
-  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.
-  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.
-  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by `lumin help-agent`; never mint a replacement ID.
+- Query operation show with that operation ID before any retry. It is read-only:
+  repeated shows never resume work or change liveness. For gate and cache
+  operations, consume a `committed` result; retry the identical mutation with the
+  same ID for `pending` or `interrupted`. For retention operations, consume a
+  `committed` or `stale` result; retry the identical mutation with the same ID
+  for `pruning`. Never wait for show alone to change an unfinished state.
 - When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:
   1. Preserve the original public command and all arguments unchanged.
-  2. Run `lumin store migrate --format json` and no other migration command.
-  3. Accept only the exact migration DTO printed by `lumin help-agent`.
+  2. Run only the lifecycle-store migration command named by installed help.
+  3. Accept only the exact migration DTO printed by the public agent help.
   4. Retry the preserved original public command with the same arguments.
 - Never read, edit, infer, or repair `.lumin` internals. Missing, failed, stale,
   unsupported, or truncated evidence is not clean evidence.

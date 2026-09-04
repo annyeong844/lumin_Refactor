@@ -4,7 +4,7 @@ Status: active
 
 Owner: PLAN-001
 
-Revision: 2026-09-02
+Revision: 2026-09-03
 
 ## Purpose and Ownership
 
@@ -52,9 +52,8 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 Known non-corpus exit gaps:
 
-- packaged Codex/Claude Code adapter mutation coverage and packaged native
-  path/root, NUL-input, cursor, and physical-alias round trips are not yet
-  accepted;
+- packaged native path/root, NUL-input, cursor, and physical-alias round trips
+  are not yet accepted;
 - approved performance and memory budgets have not yet been achieved and
   proven by the completed public binary.
 
@@ -160,7 +159,7 @@ Owner routes: PRODUCT-000 and SLICE-001 Sections 11 and 14, AC 8, 9, and 35.
   exact staged inventory whose manifest binds the executable and both adapters
   to the public binary build ID and payload digests.
 - [x] Run package behavior with Cargo and Node unavailable.
-- [ ] Prove Codex and Claude Code adapters invoke the same public commands and
+- [x] Prove Codex and Claude Code adapters invoke the same public commands and
   DTOs without embedded semantic tables or source fallbacks.
 - [ ] Prove native path/root, NUL-input, cursor, and physical-alias round trips
   through the packaged binaries on both platforms.

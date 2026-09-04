@@ -58,6 +58,22 @@ fn run_binary(
         })
 }
 
+fn run_binary_with_env(
+    binary: &Path,
+    root: &Path,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+) -> Result<std::process::Output, String> {
+    let mut command = binary_command(binary, root, arguments)?;
+    command.envs(environment.iter().copied());
+    command.output().map_err(|error| {
+        format!(
+            "cannot execute packaged lumin {}: {error}",
+            binary.display()
+        )
+    })
+}
+
 fn run_binary_with_stdout(
     binary: &Path,
     root: &Path,

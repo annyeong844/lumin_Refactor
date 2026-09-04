@@ -186,6 +186,9 @@ fn execute_inner(
     build_identity: &BuildIdentity,
     input: &mut dyn Read,
 ) -> Result<CommandOutput, CliError> {
+    if let Some(help) = requested_command_help(&arguments)? {
+        return Ok(success(help));
+    }
     let mut arguments = Arguments::new(arguments);
     let command = arguments
         .next_utf8("command")?
@@ -208,6 +211,16 @@ fn execute_inner(
         "runs" => retention::runs(root, &mut arguments),
         _ => Err(CliError::UnknownArgument(command)),
     }
+}
+
+fn requested_command_help(arguments: &[OsString]) -> Result<Option<String>, CliError> {
+    if arguments.len() != 2 || arguments[1].to_str() != Some("--help") {
+        return Ok(None);
+    }
+    let command = arguments[0]
+        .to_str()
+        .ok_or_else(|| CliError::NonUtf8(format!("command: {}", arguments[0].to_string_lossy())))?;
+    Ok(help_agent::command_help(command))
 }
 
 fn success(stdout: String) -> CommandOutput {
