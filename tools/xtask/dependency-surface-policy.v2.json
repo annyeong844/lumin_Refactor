@@ -53,7 +53,8 @@
           "optional": false,
           "defaultFeatures": true,
           "features": [
-            "gate-test-fault"
+            "gate-test-fault",
+            "logical-store-snapshot-test"
           ],
           "sourceKind": "workspace",
           "resolution": {
@@ -238,6 +239,9 @@
         "gate-test-fault": [],
         "lifecycle-migration-test-fault": [
           "lumin-store/lifecycle-migration-test-fault"
+        ],
+        "logical-store-snapshot-test": [
+          "lumin-store/logical-store-snapshot-test"
         ],
         "namespace-test-crash": [
           "lumin-store/namespace-test-crash"
@@ -1138,6 +1142,7 @@
         "cache-cleanup-test-fault": [],
         "collection-ordering-test-perturb": [],
         "lifecycle-migration-test-fault": [],
+        "logical-store-snapshot-test": [],
         "namespace-test-crash": [],
         "publication-test-crash": [],
         "retention-test-crash": []

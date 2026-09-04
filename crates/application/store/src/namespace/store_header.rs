@@ -348,7 +348,9 @@ fn decode_prior_store_header_bytes(bytes: &[u8]) -> Result<PriorLifecycleStoreHe
     Ok(header)
 }
 
-fn read_store_header_bytes_from_read(read: &ReadTransaction) -> Result<Vec<u8>, StoreError> {
+pub(super) fn read_store_header_bytes_from_read(
+    read: &ReadTransaction,
+) -> Result<Vec<u8>, StoreError> {
     let table = match read.open_table(STORE_HEADER) {
         Ok(table) => table,
         Err(TableError::TableDoesNotExist(_)) => {

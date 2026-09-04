@@ -29,11 +29,28 @@ pub(crate) use platform::{
     same_volume_and_mount, validate_active_unpublished_name,
 };
 
-#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
 pub(crate) fn current_logical_snapshot_for_test(
     guard: &NamespaceGuard,
 ) -> Result<Vec<u8>, StoreError> {
     migration::current_logical_snapshot_for_test(guard)
+}
+
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
+pub(crate) fn complete_logical_observation_for_test(
+    guard: &NamespaceGuard,
+) -> Result<Vec<u8>, StoreError> {
+    migration::complete_logical_observation_for_test(guard)
 }
 use records::*;
 use store_header::*;
@@ -219,6 +236,26 @@ impl NamespaceState {
         root: &Path,
         binding: &RepositoryBinding,
     ) -> Result<Option<Self>, StoreError> {
+        Self::open_existing_without_recovery(root, binding)
+    }
+
+    #[cfg(any(
+        test,
+        feature = "logical-store-snapshot-test",
+        feature = "namespace-test-crash",
+        feature = "retention-test-crash"
+    ))]
+    pub(super) fn open_for_observation(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
+        Self::open_existing_without_recovery(root, binding)
+    }
+
+    fn open_existing_without_recovery(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
         let repository = HeldRepository::open(root, binding.clone())?;
         let state_dir = repository.path.join(".lumin");
         match fs::symlink_metadata(&state_dir) {
@@ -323,6 +360,24 @@ impl NamespaceState {
         )
     }
 
+    #[cfg(any(
+        test,
+        feature = "logical-store-snapshot-test",
+        feature = "namespace-test-crash",
+        feature = "retention-test-crash"
+    ))]
+    pub(super) fn with_observation_lock<T>(
+        &self,
+        operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock(
+            false,
+            LockPurpose::Observation,
+            None::<fn() -> Result<(), StoreError>>,
+            operation,
+        )
+    }
+
     fn with_migration_lock<T>(
         &self,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
@@ -372,12 +427,30 @@ impl NamespaceState {
                 })
                 .and_then(|()| operation(&guard)),
             LockPurpose::Migration => operation(&guard),
+            #[cfg(any(
+                test,
+                feature = "logical-store-snapshot-test",
+                feature = "namespace-test-crash",
+                feature = "retention-test-crash"
+            ))]
+            LockPurpose::Observation => migration::require_idle(&guard)
+                .and_then(|()| guard.validate_bound_entries())
+                .and_then(|()| operation(&guard)),
         };
         let final_validation = match purpose {
             LockPurpose::Ordinary => {
                 migration::require_idle(&guard).and_then(|()| guard.validate_complete())
             }
             LockPurpose::Migration => guard.validate_bound_entries(),
+            #[cfg(any(
+                test,
+                feature = "logical-store-snapshot-test",
+                feature = "namespace-test-crash",
+                feature = "retention-test-crash"
+            ))]
+            LockPurpose::Observation => {
+                migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
+            }
         };
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(result, final_validation, unlock)
@@ -468,6 +541,13 @@ impl NamespaceState {
 enum LockPurpose {
     Ordinary,
     Migration,
+    #[cfg(any(
+        test,
+        feature = "logical-store-snapshot-test",
+        feature = "namespace-test-crash",
+        feature = "retention-test-crash"
+    ))]
+    Observation,
 }
 
 impl HeldRepository {

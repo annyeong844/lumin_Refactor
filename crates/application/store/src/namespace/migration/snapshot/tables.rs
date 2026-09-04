@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use redb::{
-    Database, ReadTransaction, ReadableTable, TableDefinition, TableError, TableHandle,
-    WriteTransaction,
+    Database, MultimapTableHandle, ReadTransaction, ReadableTable, TableDefinition, TableError,
+    TableHandle, WriteTransaction,
 };
 
 use crate::cache::{
@@ -48,6 +48,22 @@ pub(super) fn read_legacy_snapshot(
     read: &ReadTransaction,
 ) -> Result<LogicalStoreSnapshot, StoreError> {
     read_raw_snapshot(read, true)
+}
+
+pub(super) fn read_table_inventory(
+    read: &ReadTransaction,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), StoreError> {
+    let tables = read
+        .list_tables()
+        .map_err(backend_error)?
+        .map(|table| table.name().to_owned())
+        .collect();
+    let multimap_tables = read
+        .list_multimap_tables()
+        .map_err(backend_error)?
+        .map(|table| table.name().to_owned())
+        .collect();
+    Ok((tables, multimap_tables))
 }
 
 fn read_raw_snapshot(
@@ -115,11 +131,7 @@ fn validate_table_inventory(
     read: &ReadTransaction,
     allow_migration_control: bool,
 ) -> Result<(), StoreError> {
-    let observed = read
-        .list_tables()
-        .map_err(backend_error)?
-        .map(|table| table.name().to_owned())
-        .collect::<BTreeSet<_>>();
+    let (observed, multimap_tables) = read_table_inventory(read)?;
     let known = KNOWN_TABLES
         .iter()
         .map(|name| (*name).to_owned())
@@ -139,12 +151,7 @@ fn validate_table_inventory(
             unknown.join(", ")
         )));
     }
-    if read
-        .list_multimap_tables()
-        .map_err(backend_error)?
-        .next()
-        .is_some()
-    {
+    if !multimap_tables.is_empty() {
         return Err(StoreError::Integrity(
             "lifecycle store contains unsupported multimap tables".to_owned(),
         ));

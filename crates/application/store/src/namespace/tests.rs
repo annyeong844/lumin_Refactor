@@ -2,6 +2,7 @@ use std::fs;
 
 use redb::TableError;
 
+use crate::retention::RUN_PINS;
 use crate::{RepositoryStore, SEQUENCES, StoreError, backend_error, io_error};
 
 use super::{LifecycleLockHeader, MANAGED_KINDS, RepositoryMarker, read_canonical_path};
@@ -13,6 +14,108 @@ fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
     let admission = lumin_inventory::repository_admission(root)
         .map_err(|error| StoreError::Integrity(error.to_string()))?;
     RepositoryStore::open(&admission.canonical_root, &admission.binding)
+}
+
+#[test]
+fn logical_snapshot_observer_never_recovers_or_rewrites_the_store()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let admission = lumin_inventory::repository_admission(root.path())?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    let (attempt_id, _) =
+        crate::publication::reserve_migration_attempt_allocation_for_test(&store, None)?;
+    let store_path = root.path().join(".lumin/lifecycle.store");
+    let physical_before = fs::read(&store_path)?;
+
+    let first = RepositoryStore::complete_logical_observation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    let second = RepositoryStore::complete_logical_observation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    assert_eq!(second, first);
+    assert_eq!(fs::read(&store_path)?, physical_before);
+
+    let observed: serde_json::Value = serde_json::from_slice(&first)?;
+    let table_names = observed
+        .get("tableNames")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| std::io::Error::other("logical observation omitted its table inventory"))?;
+    assert!(
+        table_names
+            .iter()
+            .any(|name| name.as_str() == Some("store-header"))
+    );
+    assert!(
+        !table_names
+            .iter()
+            .any(|name| name.as_str() == Some("run-pins")),
+        "allocation fixture unexpectedly created the run-pins table"
+    );
+    assert!(
+        observed
+            .get("storeHeader")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|bytes| !bytes.is_empty()),
+        "logical observation omitted the exact store header bytes"
+    );
+    assert_eq!(
+        observed
+            .get("multimapTableNames")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(
+        observed
+            .pointer("/records/attempt_leases")
+            .and_then(|leases| leases.get(attempt_id.as_str()))
+            .is_some(),
+        "observation-only snapshot recovered an incomplete attempt allocation"
+    );
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        {
+            let _table = write.open_table(RUN_PINS).map_err(backend_error)?;
+        }
+        guard.commit(write)
+    })?;
+    let with_empty_table = RepositoryStore::complete_logical_observation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    assert_ne!(with_empty_table, first);
+    let with_empty_table: serde_json::Value = serde_json::from_slice(&with_empty_table)?;
+    assert!(
+        with_empty_table
+            .get("tableNames")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|names| names.iter().any(|name| name.as_str() == Some("run-pins"))),
+        "logical observation normalized away an empty known table"
+    );
+    assert_eq!(with_empty_table.get("records"), observed.get("records"));
+
+    drop(RepositoryStore::open(
+        &admission.canonical_root,
+        &admission.binding,
+    )?);
+    let recovered = RepositoryStore::complete_logical_observation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    let recovered: serde_json::Value = serde_json::from_slice(&recovered)?;
+    assert!(
+        recovered
+            .pointer("/records/attempt_leases")
+            .and_then(|leases| leases.get(attempt_id.as_str()))
+            .is_none(),
+        "ordinary repository open did not recover the allocation fixture"
+    );
+    Ok(())
 }
 
 fn require_integrity_failure(
