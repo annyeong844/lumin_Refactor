@@ -221,6 +221,8 @@ fn validate_platform_contract(
     validate_corrupt_migration_anchor(binary, fixture_binary, &repository)?;
 
     validate_packaged_cleanup_contract(binary, fixture_binary, &scratch.join("cleanup-contract"))?;
+    super::path_roundtrip::validate(binary, &scratch.join("path-roundtrip"))?;
+    super::physical_alias::validate(binary, &scratch.join("physical-alias"))?;
     validate_absent_store(binary, &scratch.join("absent"))?;
     validate_reserved_path(binary, &scratch.join("reserved"))?;
     Ok(())
