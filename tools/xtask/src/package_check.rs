@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -5,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 mod artifact;
+mod path_roundtrip;
+mod physical_alias;
 mod platform;
 mod skills;
 
@@ -102,9 +106,52 @@ fn run_binary_with_broken_stdout(
     run_binary_with_stdout(binary, root, arguments, Stdio::from(writer))
 }
 
+fn run_binary_os_with_stdin(
+    binary: &Path,
+    root: &Path,
+    arguments: &[OsString],
+    input: &[u8],
+) -> Result<std::process::Output, String> {
+    let mut command = base_binary_command(binary, root)?;
+    command
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "cannot execute packaged lumin {}: {error}",
+            binary.display()
+        )
+    })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "packaged lumin stdin pipe is unavailable".to_owned())?;
+    if let Err(error) = stdin.write_all(input) {
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("cannot write packaged lumin stdin: {error}"));
+    }
+    drop(stdin);
+    child.wait_with_output().map_err(|error| {
+        format!(
+            "cannot collect packaged lumin {} output: {error}",
+            binary.display()
+        )
+    })
+}
+
 fn binary_command(binary: &Path, root: &Path, arguments: &[&str]) -> Result<Command, String> {
+    let mut command = base_binary_command(binary, root)?;
+    command.args(arguments);
+    Ok(command)
+}
+
+fn base_binary_command(binary: &Path, root: &Path) -> Result<Command, String> {
     let mut command = Command::new(binary);
-    command.env_clear().current_dir(root).args(arguments);
+    command.env_clear().current_dir(root);
     #[cfg(windows)]
     command.env(
         "SystemRoot",
