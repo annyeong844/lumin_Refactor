@@ -22,10 +22,19 @@ budget with four default workers: cold default median `3,469,498,100 ns`,
 Its other numeric budgets and complete semantic oracle pass. The retained CI
 artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
-This is a blocking miss, not measurement noise to discard. Native Linux CI
-also lacks a completed matrix because its initial musl C compiler setup was
-missing. The repaired candidate still requires fresh blocking matrices; the
-earlier local reports do not establish their outcome.
+This is a blocking miss, not measurement noise to discard.
+
+The [latest completed public CI matrix](https://github.com/annyeong844/lumin_Refactor/actions/runs/33948747263)
+on `3c3e4271df16c0eacaaf906de2245474d3bdad9b` passes the functional, crash,
+determinism, and native Linux package checks. Windows still misses only the
+numeric scaling target: default-four-worker median `1,619,750,200 ns` versus
+`1,860,678,700 ns` for `jobs=1`, ratio `0.8705157961984517`. Its report SHA-256
+is `0b5309e38315df4e7917fd89a25a0886e7841c236016186c4fff0068221c0bca`.
+Native Linux completes all seven modes with ratio `0.7396309366466656` and no
+numeric target miss; its report SHA-256 is
+`7168b7ea412caca25fcc19b1f2fcb741c6a882785fe97e1b795923ab08fafa51`.
+Neither these matrices nor the earlier local reports establish the outcome of
+subsequent product changes. Fresh blocking measurements remain required.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It

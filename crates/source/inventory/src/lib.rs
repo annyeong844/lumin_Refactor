@@ -222,6 +222,7 @@ struct PreparedSource {
 
 enum SourcePreparation {
     Ready(PreparedSource),
+    ReservedState,
     Unavailable(Limitation),
 }
 
@@ -1147,6 +1148,11 @@ fn prepare_source(
     context: &FileObservationContext<'_>,
     candidate: SourceCandidate,
 ) -> Result<SourcePreparation, InventoryError> {
+    // Containment is per-file I/O, not deterministic reduction work. Keep it in the
+    // installed engine pool while preserving the check before opening source bytes.
+    if reserved_state::semantic_input_resolves_into_reserved_state(context.root, &candidate.path)? {
+        return Ok(SourcePreparation::ReservedState);
+    }
     let logical_path = candidate.path.display_escaped();
     let opened = match capture::OpenedSource::open(
         context.canonical_root,
@@ -1271,12 +1277,6 @@ impl CollectedFiles {
             let Some(kind) = SourceKind::from_native_path(&candidate.relative) else {
                 continue;
             };
-            if reserved_state::semantic_input_resolves_into_reserved_state(
-                context.root,
-                &candidate.path,
-            )? {
-                continue;
-            }
             source_candidates.push(SourceCandidate {
                 native_path: candidate.native_path,
                 relative: candidate.relative,
@@ -1315,6 +1315,7 @@ impl CollectedFiles {
                 SourcePreparation::Unavailable(limitation) => {
                     self.limitations.push(limitation);
                 }
+                SourcePreparation::ReservedState => {}
             }
         }
         let groups = groups.into_values().collect::<Vec<_>>();
