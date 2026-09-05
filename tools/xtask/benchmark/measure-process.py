@@ -280,18 +280,19 @@ def measure(args: argparse.Namespace) -> None:
         os.fsync(stdout.fileno())
         os.fsync(stderr.fileno())
 
-    write_new(
-        args.output,
-        {
-            "schemaVersion": SCHEMA,
-            "analysisChildPids": sorted(child_pids),
-            "elapsedNanoseconds": elapsed,
-            "exitCode": exit_code,
-            "observerResolutionNanoseconds": 1_000_000,
-            "peakRssBytes": peak_rss,
-            "rssSource": rss_source,
-        },
-    )
+    measurement = {
+        "schemaVersion": SCHEMA,
+        "analysisChildPids": sorted(child_pids),
+        "elapsedNanoseconds": elapsed,
+        "exitCode": exit_code,
+        "observerResolutionNanoseconds": 1_000_000,
+        "peakRssBytes": peak_rss,
+        "rssSource": rss_source,
+    }
+    if args.subcommand == "measure-audit-diagnostic":
+        measurement["schemaVersion"] = "lumin.phase1-process-measurement.v2"
+        measurement["processId"] = process.pid
+    write_new(args.output, measurement)
 
 
 def main() -> None:
@@ -300,12 +301,13 @@ def main() -> None:
     host = subparsers.add_parser("host")
     host.add_argument("--root", required=True, type=Path)
     host.add_argument("--output", required=True, type=Path)
-    run = subparsers.add_parser("measure")
-    run.add_argument("--cwd", required=True, type=Path)
-    run.add_argument("--output", required=True, type=Path)
-    run.add_argument("--stdout", required=True, type=Path)
-    run.add_argument("--stderr", required=True, type=Path)
-    run.add_argument("command", nargs=argparse.REMAINDER)
+    for name in ("measure", "measure-audit-diagnostic"):
+        run = subparsers.add_parser(name)
+        run.add_argument("--cwd", required=True, type=Path)
+        run.add_argument("--output", required=True, type=Path)
+        run.add_argument("--stdout", required=True, type=Path)
+        run.add_argument("--stderr", required=True, type=Path)
+        run.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.subcommand == "host":
         write_new(args.output, host_info(args.root))

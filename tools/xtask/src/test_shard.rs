@@ -17,6 +17,7 @@ const STORE_LIB_TEST_MODULES: &[&str] = &[
     "evidence_store_tests",
 ];
 const FEATURE_GATED_TARGETS: &[&str] = &[
+    "audit_diagnostic",
     "cache_cleanup_publication_race",
     "lifecycle_operation_idempotency",
     "lifecycle_store_migration",

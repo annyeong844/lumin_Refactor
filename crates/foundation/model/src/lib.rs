@@ -1,3 +1,5 @@
+#[cfg(feature = "audit-execution-test-profile")]
+pub mod audit_diagnostic;
 mod codec;
 mod config;
 mod delta;

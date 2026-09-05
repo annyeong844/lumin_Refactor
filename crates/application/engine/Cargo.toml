@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+audit-execution-test-profile = ["lumin-model/audit-execution-test-profile"]
 cache-cleanup-test-fault = ["lumin-store/cache-cleanup-test-fault"]
 collection-ordering-test-perturb = [
     "lumin-dead/collection-ordering-test-perturb",

@@ -8,6 +8,7 @@
 //! - SHA-256 digest verification of spec artifacts
 
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use syn::visit::Visit;
 
@@ -94,6 +95,8 @@ struct PolicyVisitor {
     command_found: bool,
     /// ThreadPoolBuilder::new() call sites found.
     pool_builders: Vec<PoolBuilderInfo>,
+    /// Immutable, lexically bound builder chains, before their consuming build call.
+    pool_receivers: BTreeMap<String, Vec<ChainStep>>,
     /// Global rayon entry points found.
     rayon_globals: Vec<String>,
     /// ScanLock named types found.
@@ -145,6 +148,7 @@ impl PolicyVisitor {
             violations: Vec::new(),
             command_found: false,
             pool_builders: Vec::new(),
+            pool_receivers: BTreeMap::new(),
             rayon_globals: Vec::new(),
             scan_locks: Vec::new(),
             worker_stack_consts: Vec::new(),
@@ -153,6 +157,34 @@ impl PolicyVisitor {
 }
 
 impl<'ast> Visit<'ast> for PolicyVisitor {
+    fn visit_block(&mut self, node: &'ast syn::Block) {
+        let enclosing = self.pool_receivers.clone();
+        syn::visit::visit_block(self, node);
+        self.pool_receivers = enclosing;
+    }
+
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        // Visit the initializer before introducing the new binding (shadowing).
+        syn::visit::visit_local(self, node);
+        if let syn::Pat::Ident(binding) = &node.pat {
+            let mut chain = Vec::new();
+            let rooted = binding.mutability.is_none()
+                && binding.by_ref.is_none()
+                && binding.subpat.is_none()
+                && node.init.as_ref().is_some_and(|init| {
+                    collect_chain_steps(&init.expr, &mut chain, &self.pool_receivers)
+                });
+            self.pool_receivers.remove(&binding.ident.to_string());
+            if rooted {
+                self.pool_receivers.insert(binding.ident.to_string(), chain);
+            }
+        } else {
+            // Typed/destructured patterns are not proof that an earlier receiver
+            // is still in scope; never trust a potentially shadowed binding.
+            self.pool_receivers.clear();
+        }
+    }
+
     fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
         // Skip test-only items
         if node.attrs.iter().any(is_cfg_test_only) {
@@ -275,7 +307,7 @@ impl<'ast> Visit<'ast> for PolicyVisitor {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         // Check for ThreadPoolBuilder chain and rayon globals via method calls
-        check_method_for_pool_builder(node, &mut self.pool_builders);
+        check_method_for_pool_builder(node, &mut self.pool_builders, &self.pool_receivers);
         check_method_for_rayon_global_method(node, &self.file_display, &mut self.rayon_globals);
         syn::visit::visit_expr_method_call(self, node);
     }
@@ -387,13 +419,14 @@ fn check_method_for_rayon_global_method(
 fn check_method_for_pool_builder(
     node: &syn::ExprMethodCall,
     pool_builders: &mut Vec<PoolBuilderInfo>,
+    receivers: &BTreeMap<String, Vec<ChainStep>>,
 ) {
     // We look for .build() as the outermost call of the chain
     if node.method != "build" {
         return;
     }
     let mut chain = vec![ChainStep::Build];
-    let rooted = collect_chain_steps(&node.receiver, &mut chain);
+    let rooted = collect_chain_steps(&node.receiver, &mut chain, receivers);
     if rooted {
         pool_builders.push(PoolBuilderInfo { chain, rooted });
     }
@@ -401,7 +434,11 @@ fn check_method_for_pool_builder(
 
 /// Walk the receiver chain from outside in, collecting steps.
 /// Returns `true` if the root is `ThreadPoolBuilder::new()`.
-fn collect_chain_steps(expr: &syn::Expr, chain: &mut Vec<ChainStep>) -> bool {
+fn collect_chain_steps(
+    expr: &syn::Expr,
+    chain: &mut Vec<ChainStep>,
+    receivers: &BTreeMap<String, Vec<ChainStep>>,
+) -> bool {
     match expr {
         syn::Expr::MethodCall(method) => {
             let step = match method.method.to_string().as_str() {
@@ -418,7 +455,7 @@ fn collect_chain_steps(expr: &syn::Expr, chain: &mut Vec<ChainStep>) -> bool {
                 other => ChainStep::Other(other.to_owned()),
             };
             chain.push(step);
-            collect_chain_steps(&method.receiver, chain)
+            collect_chain_steps(&method.receiver, chain, receivers)
         }
         syn::Expr::Call(call) => {
             if let syn::Expr::Path(path) = &*call.func {
@@ -431,6 +468,14 @@ fn collect_chain_steps(expr: &syn::Expr, chain: &mut Vec<ChainStep>) -> bool {
                 }
             }
             false
+        }
+        syn::Expr::Path(path) if path.path.segments.len() == 1 => {
+            if let Some(bound) = receivers.get(&path.path.segments[0].ident.to_string()) {
+                chain.extend_from_slice(bound);
+                true
+            } else {
+                false
+            }
         }
         _ => false,
     }
@@ -879,6 +924,62 @@ mod tests {
         assert_eq!(v.pool_builders.len(), 1);
         assert_eq!(v.pool_builders[0].chain, CANONICAL_CHAIN);
         assert!(v.pool_builders[0].rooted);
+    }
+
+    #[test]
+    fn immutable_pool_receiver_preserves_the_exact_builder_chain() {
+        let source = r#"
+            fn f() {
+                let builder = rayon::ThreadPoolBuilder::new()
+                    .num_threads(4).stack_size(WORKER_STACK_BYTES)
+                    .thread_name(|i| format!("w-{i}"));
+                observe_before_build();
+                let pool = builder.build();
+            }
+        "#;
+        let observed = parse_and_visit_engine(source);
+        assert_eq!(observed.pool_builders.len(), 1);
+        assert_eq!(observed.pool_builders[0].chain, CANONICAL_CHAIN);
+        for changed in [
+            source.replace("WORKER_STACK_BYTES", "1024"),
+            source.replace("builder.build()", "builder.use_current_thread().build()"),
+        ] {
+            let observed = parse_and_visit_engine(&changed);
+            assert_eq!(observed.pool_builders.len(), 1);
+            assert_ne!(observed.pool_builders[0].chain, CANONICAL_CHAIN);
+        }
+    }
+
+    #[test]
+    fn shadowed_or_mutable_pool_receivers_are_not_authenticated() {
+        for replacement in [
+            "let builder = foreign();",
+            "let mut builder = foreign();",
+            "let builder: Other = foreign();",
+            "let (builder, other) = foreign();",
+        ] {
+            let source = format!(
+                r#"
+                fn f() {{
+                    let builder = rayon::ThreadPoolBuilder::new()
+                        .num_threads(4).stack_size(WORKER_STACK_BYTES)
+                        .thread_name(|i| format!("w-{{i}}"));
+                    {replacement}
+                    builder.build();
+                }}
+            "#
+            );
+            assert!(parse_and_visit_engine(&source).pool_builders.is_empty());
+        }
+        let observed = parse_and_visit_engine(
+            r#"
+            fn f() {
+                { let builder = rayon::ThreadPoolBuilder::new().num_threads(4); }
+                builder.build();
+            }
+        "#,
+        );
+        assert!(observed.pool_builders.is_empty());
     }
 
     #[test]

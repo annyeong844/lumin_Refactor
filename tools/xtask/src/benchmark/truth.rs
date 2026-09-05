@@ -119,6 +119,7 @@ pub(super) fn validate_semantic_dump(
     root: &Path,
     truth: &Value,
     scope: Scope<'_>,
+    capture: &Path,
 ) -> Result<SemanticDump, String> {
     let expected = expected_findings(truth)?;
     let mut observed_items = Vec::new();
@@ -149,7 +150,12 @@ pub(super) fn validate_semantic_dump(
             arguments.push("--cursor".into());
             arguments.push(value.into());
         }
-        let page = super::measurement::run_query(binary, root, &arguments)?;
+        let page = super::measurement::run_query(
+            binary,
+            root,
+            &arguments,
+            &capture.join(format!("findings-page-{}", cursors.len())),
+        )?;
         validate_page_header(&page, &scope, expected.len())?;
         let items = page
             .pointer("/items")
@@ -242,6 +248,7 @@ pub(super) fn validate_semantic_dump(
                 "--format".into(),
                 "json".into(),
             ],
+            &capture.join("overview"),
         )?;
         require_equal_string(&overview, "/schemaVersion", "lumin.overview.v2")?;
         require_equal_u64(&overview, "/findingCount", 256)?;

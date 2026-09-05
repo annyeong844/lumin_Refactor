@@ -1,11 +1,12 @@
 # REVIEW-005: Phase 1 Performance Evidence Review
 
-Status: **author design-review candidate; not frozen; P1-60 remains open**
+Status: **review candidate; not frozen; P1-60 remains open**
 
 This review owns the decisions needed to turn the current measured performance
 candidate into complete SLICE-001 AC 16 evidence. No owner approval or
-independent adversarial PASS is claimed. Existing frozen requirements continue
-to apply until an exact amendment receives both reviews.
+whole-amendment independent PASS is claimed. The scoped diagnostic review
+below does not approve the remaining decisions. Existing frozen requirements
+continue to apply until an exact amendment receives both reviews.
 
 ## Measured candidate
 
@@ -24,15 +25,15 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI matrix](https://github.com/annyeong844/lumin_Refactor/actions/runs/33948747263)
-on `3c3e4271df16c0eacaaf906de2245474d3bdad9b` passes the functional, crash,
+The [latest completed public CI matrix](https://github.com/annyeong844/lumin_Refactor/actions/runs/33960297104)
+on `a83ee602dfaf1d62c16f8f9f68f6111c81c203fb` passes the functional, crash,
 determinism, and native Linux package checks. Windows still misses only the
-numeric scaling target: default-four-worker median `1,619,750,200 ns` versus
-`1,860,678,700 ns` for `jobs=1`, ratio `0.8705157961984517`. Its report SHA-256
-is `0b5309e38315df4e7917fd89a25a0886e7841c236016186c4fff0068221c0bca`.
-Native Linux completes all seven modes with ratio `0.7396309366466656` and no
+numeric scaling target: default-four-worker median `1,756,281,200 ns` versus
+`2,023,961,300 ns` for `jobs=1`, ratio `0.8677444573668479`. Its report SHA-256
+is `456b57e95910007f921a5be6887534385e9b51b36e5efe93c1f7f53ac3928399`.
+Native Linux completes all seven modes with ratio `0.7237935075487433` and no
 numeric target miss; its report SHA-256 is
-`7168b7ea412caca25fcc19b1f2fcb741c6a882785fe97e1b795923ab08fafa51`.
+`43a5abc3c60da3ba9f37cd1fe8e08c3cc87edaca86fa4fe183535de579802ec6`.
 Neither these matrices nor the earlier local reports establish the outcome of
 subsequent product changes. Fresh blocking measurements remain required.
 
@@ -57,6 +58,23 @@ revision and packaged build, and consume them without changing semantic IDs or
 determinism. Missing observations must remain unavailable, never be replaced by
 requested values or zero times. Any new public transport or persisted shape
 requires its owning contract to be reviewed before implementation.
+
+### Windows cold-audit diagnostic candidate
+
+The [W2 diagnostic design](probes/phase1-windows-audit-execution-diagnostic-2026-09-05/DESIGN.md)
+defines a separate feature-built, non-distributable public-audit probe and an
+exact Windows CI comparison with the unchanged release package. It measures
+the existing call boundaries and records pool-produced observations without
+inventing scheduler ready-wait time, backend flush time, or OS stack usage.
+The full semantic oracle remains mandatory; malformed/missing observations
+fail the diagnostic and cannot improve a numeric budget result.
+
+The [exact W2 review record](probes/phase1-windows-audit-execution-diagnostic-2026-09-05/REVIEW.md)
+records author design review, independent adversarial scoped PASS, and the
+user's 2026-09-05 approval freezing W2 for diagnostic implementation. This
+narrow candidate is for bottleneck diagnosis, not an amendment that fulfills
+permanent run/gate observability. It does not approve the allocator, `/mnt`
+disposition, or Phase 1 exit.
 
 ## Proposed WSL `/mnt` disposition
 

@@ -15,17 +15,27 @@ pub(super) fn publish(
     root: &Path,
     reserved_state_lookup: &ReservedStateIdentityLookup,
     snapshot: &AnalysisSnapshot,
+    #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+        &mut super::audit_profile::AuditProfiler,
+    >,
 ) -> Result<PublishedRun, StoreError> {
+    audit_phase_begin!(profile, EvidencePrepare);
     let evidence = lumin_store::prepare_run_evidence(&snapshot.evidence)?;
-    store.publish_run_with_preflight(attempt, move |reserved_identities| {
+    audit_phase_end!(profile, EvidencePrepare);
+    audit_phase_begin!(profile, StorePublish);
+    let result = store.publish_run_with_preflight(attempt, |reserved_identities| {
+        audit_phase_begin!(profile, FinalInputs);
         validate_snapshot(
             root,
             &snapshot.inputs,
             reserved_state_lookup,
             reserved_identities,
         )?;
+        audit_phase_end!(profile, FinalInputs);
         Ok(evidence)
-    })
+    });
+    audit_phase_end!(profile, StorePublish);
+    result
 }
 
 fn validate_snapshot(
@@ -172,6 +182,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         ) {
             Err(error) => error,
             Ok(_) => return Err("a late reserved-state alias published audit evidence".into()),
@@ -238,6 +250,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         ) {
             Err(error) => error,
             Ok(_) => return Err("an in-place config rewrite published stale audit evidence".into()),
@@ -289,6 +303,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         ) {
             Err(error) => error,
             Ok(_) => return Err("a newly created config published stale audit evidence".into()),
@@ -340,6 +356,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         )?;
         Ok(())
     }

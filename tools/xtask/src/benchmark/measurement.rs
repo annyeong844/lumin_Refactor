@@ -102,6 +102,29 @@ pub(super) fn measure_product(
     arguments: &[OsString],
     capture: &Path,
 ) -> Result<ProcessMeasurement, String> {
+    measure_product_mode(python, script, binary, root, arguments, capture, false)
+}
+
+pub(super) fn measure_diagnostic(
+    python: &Path,
+    script: &Path,
+    binary: &Path,
+    root: &Path,
+    arguments: &[OsString],
+    capture: &Path,
+) -> Result<ProcessMeasurement, String> {
+    measure_product_mode(python, script, binary, root, arguments, capture, true)
+}
+
+fn measure_product_mode(
+    python: &Path,
+    script: &Path,
+    binary: &Path,
+    root: &Path,
+    arguments: &[OsString],
+    capture: &Path,
+    diagnostic: bool,
+) -> Result<ProcessMeasurement, String> {
     fs::create_dir(capture).map_err(|error| {
         format!(
             "cannot create process capture directory {}: {error}",
@@ -109,6 +132,14 @@ pub(super) fn measure_product(
         )
     })?;
     let metrics_path = capture.join("measurement.json");
+    super::archive::write_json(
+        &capture.join("invocation.json"),
+        &serde_json::json!({
+            "binary":binary, "root":root,
+            "arguments":arguments.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>(),
+            "observerMode":if diagnostic { "measure-audit-diagnostic" } else { "measure" },
+        }),
+    )?;
     let stdout_path = capture.join("stdout");
     let stderr_path = capture.join("stderr");
     let mut command = Command::new(python);
@@ -116,7 +147,11 @@ pub(super) fn measure_product(
         .arg("-I")
         .arg("-S")
         .arg(script)
-        .arg("measure")
+        .arg(if diagnostic {
+            "measure-audit-diagnostic"
+        } else {
+            "measure"
+        })
         .arg("--cwd")
         .arg(root)
         .arg("--output")
@@ -131,9 +166,19 @@ pub(super) fn measure_product(
     let helper = command
         .output()
         .map_err(|error| format!("cannot launch benchmark process helper: {error}"))?;
+    super::archive::write_bytes(&capture.join("helper.stdout"), &helper.stdout)?;
+    super::archive::write_bytes(&capture.join("helper.stderr"), &helper.stderr)?;
     require_helper_success(&helper, "benchmark process measurement")?;
 
-    let raw = read_json(&metrics_path, "benchmark process measurement")?;
+    let raw = read_measurement(&metrics_path, diagnostic)?;
+    let schema = if diagnostic {
+        "lumin.phase1-process-measurement.v2"
+    } else {
+        "lumin.phase1-process-measurement.v1"
+    };
+    if raw["schemaVersion"] != schema || (diagnostic && required_u64(&raw, "/processId")? == 0) {
+        return Err("unexpected process measurement schema or PID".to_owned());
+    }
     let exit_code = raw
         .pointer("/exitCode")
         .and_then(Value::as_i64)
@@ -142,7 +187,7 @@ pub(super) fn measure_product(
         .map_err(|error| format!("cannot read measured product stdout: {error}"))?;
     let product_stderr = fs::read(&stderr_path)
         .map_err(|error| format!("cannot read measured product stderr: {error}"))?;
-    if exit_code != 0 || !product_stderr.is_empty() {
+    if exit_code != 0 || (!diagnostic && !product_stderr.is_empty()) {
         return Err(format!(
             "measured product exited {exit_code}; stdout={} stderr={}",
             String::from_utf8_lossy(&product_stdout),
@@ -171,7 +216,16 @@ pub(super) fn run_query(
     binary: &Path,
     root: &Path,
     arguments: &[OsString],
+    capture: &Path,
 ) -> Result<Value, String> {
+    fs::create_dir(capture).map_err(|error| format!("cannot create query capture: {error}"))?;
+    super::archive::write_json(
+        &capture.join("invocation.json"),
+        &serde_json::json!({
+            "binary":binary, "root":root,
+            "arguments":arguments.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>(),
+        }),
+    )?;
     let mut command = Command::new(binary);
     command.env_clear().current_dir(root).args(arguments);
     #[cfg(windows)]
@@ -180,18 +234,39 @@ pub(super) fn run_query(
         std::env::var_os("SystemRoot")
             .ok_or_else(|| "SystemRoot is required to launch lumin on Windows".to_owned())?,
     );
-    let output = command
-        .output()
+    let stdout_path = capture.join("stdout");
+    let stderr_path = capture.join("stderr");
+    let stdout = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stdout_path)
+        .map_err(|error| error.to_string())?;
+    let stderr = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stderr_path)
+        .map_err(|error| error.to_string())?;
+    let status = command
+        .stdout(stdout)
+        .stderr(stderr)
+        .stdin(std::process::Stdio::null())
+        .status()
         .map_err(|error| format!("cannot run packaged benchmark query: {error}"))?;
-    if !output.status.success() || !output.stderr.is_empty() {
+    let product_stdout = fs::read(stdout_path).map_err(|error| error.to_string())?;
+    let product_stderr = fs::read(stderr_path).map_err(|error| error.to_string())?;
+    super::archive::write_json(
+        &capture.join("status.json"),
+        &serde_json::json!({"exitCode": status.code()}),
+    )?;
+    if !status.success() || !product_stderr.is_empty() {
         return Err(format!(
             "packaged benchmark query exited {:?}; stdout={} stderr={}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            status.code(),
+            String::from_utf8_lossy(&product_stdout),
+            String::from_utf8_lossy(&product_stderr)
         ));
     }
-    parse_canonical_product_json(&output.stdout, "packaged benchmark query")
+    parse_canonical_product_json(&product_stdout, "packaged benchmark query")
 }
 
 pub(super) fn python_identity(python: &Path, script: &Path, host: &Value) -> Result<Value, String> {
@@ -229,6 +304,47 @@ fn parse_canonical_product_json(bytes: &[u8], label: &str) -> Result<Value, Stri
 fn read_json(path: &Path, label: &str) -> Result<Value, String> {
     let bytes = fs::read(path).map_err(|error| format!("cannot read {label}: {error}"))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("{label} is invalid JSON: {error}"))
+}
+
+fn read_measurement(path: &Path, diagnostic: bool) -> Result<Value, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read process measurement: {error}"))?;
+    let raw: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid process measurement: {error}"))?;
+    let mut canonical = serde_json::to_vec(&raw).map_err(|error| error.to_string())?;
+    canonical.push(b'\n');
+    if bytes != canonical {
+        return Err("noncanonical or duplicate-key process measurement".to_owned());
+    }
+    let mut fields = vec![
+        "schemaVersion",
+        "analysisChildPids",
+        "elapsedNanoseconds",
+        "exitCode",
+        "observerResolutionNanoseconds",
+        "peakRssBytes",
+        "rssSource",
+    ];
+    if diagnostic {
+        fields.push("processId");
+    }
+    let object = raw
+        .as_object()
+        .ok_or("process measurement is not an object")?;
+    if object.len() != fields.len() || fields.iter().any(|key| !object.contains_key(*key)) {
+        return Err("process measurement has missing or opaque fields".to_owned());
+    }
+    if required_u64(&raw, "/elapsedNanoseconds")? == 0
+        || required_u64(&raw, "/observerResolutionNanoseconds")? != 1_000_000
+        || required_u64(&raw, "/peakRssBytes")? == 0
+        || !matches!(
+            required_string(&raw, "/rssSource")?,
+            "GetProcessMemoryInfo.PeakWorkingSetSize" | "wait4-rusage-ru_maxrss-kib"
+        )
+    {
+        return Err("unexpected process measurement observation".to_owned());
+    }
+    Ok(raw)
 }
 
 fn require_helper_success(output: &std::process::Output, label: &str) -> Result<(), String> {

@@ -9,6 +9,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+mod archive;
+mod diagnostic;
 mod fixture;
 mod measurement;
 mod truth;
@@ -19,6 +21,9 @@ const MAX_BINARY_BYTES: u64 = 12_582_912;
 const MAX_PEAK_RSS_BYTES: u64 = 536_870_912;
 
 pub(crate) fn run(arguments: &[String]) -> ExitCode {
+    if arguments == ["foundation", "--diagnose-cold-audit"] {
+        return diagnostic::run();
+    }
     if arguments != ["foundation"] {
         eprintln!("[TOOL ERROR] usage: lumin-xtask benchmark foundation");
         return ExitCode::from(2);
@@ -60,6 +65,13 @@ fn run_foundation() -> Result<(Value, bool), String> {
             package.binary.display()
         )
     })?;
+    let archive = archive::CaptureArchive::from_environment(
+        &workspace,
+        &package.root,
+        &scratch,
+        &normal_cells(),
+        false,
+    )?;
     let fixture = fixture::prepare(&workspace, &scratch, &python)?;
     verify_execution_policy(&workspace)?;
 
@@ -78,77 +90,86 @@ fn run_foundation() -> Result<(Value, bool), String> {
         times: BTreeMap::new(),
         peak_rss_bytes: 0,
         semantic_reference: None,
+        archive,
+        current_capture: None,
     };
-    let cache_conditioning = runner.condition_os_cache()?;
-    runner.run()?;
-    if runner.samples.len() != 7 * REPETITIONS {
-        return Err(format!(
-            "benchmark matrix produced {} measured samples; expected {}",
-            runner.samples.len(),
-            7 * REPETITIONS
-        ));
-    }
-    let semantic_reference = runner
-        .semantic_reference
-        .as_ref()
-        .ok_or_else(|| "benchmark matrix produced no semantic evidence".to_owned())?
-        .report_value()?;
-    let summary = summarize(
-        &runner.times,
-        runner.peak_rss_bytes,
-        binary_bytes.len() as u64,
-        default_jobs,
-        host.blocking,
-    )?;
-    let target_misses = summary
-        .pointer("/targetMisses")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "benchmark summary omitted targetMisses".to_owned())?;
-    let passed = !host.blocking || target_misses.is_empty();
-    let status = if host.blocking {
-        if passed { "PASS" } else { "FAIL" }
-    } else {
-        "REPORT_ONLY"
-    };
-    let report = serde_json::json!({
-        "schemaVersion": "lumin.phase1-foundation-benchmark.v1",
-        "status": status,
-        "blocking": host.blocking,
-        "environment": host.classification,
-        "capturedAtUnixNanoseconds": SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
-            .as_nanos()
-            .to_string(),
-        "host": host.details,
-        "osCacheState": "machine-global caches were conditioned by one unmeasured fresh jobs=1 audit and not flushed; cold means fresh repository, state namespace, and process",
-        "osCacheConditioning": cache_conditioning,
-        "scanInvocation": {"include": ["**"], "findingFilters": {}},
-        "toolchain": measurement::python_identity(&python, &script, &host.details)?,
-        "package": {
-            "target": host_target(),
-            "root": package.root.to_string_lossy(),
-            "buildId": package.build_id,
-            "binary": package.binary.to_string_lossy(),
-            "binaryBytes": binary_bytes.len(),
-            "binarySha256": sha256_hex(&binary_bytes),
-        },
-        "fixture": fixture.identity,
-        "observedAvailableParallelism": available_parallelism,
-        "defaultJobs": default_jobs,
-        "workerStackBytes": WORKER_STACK_BYTES,
-        "repetitionsPerMode": REPETITIONS,
-        "semanticTruth": semantic_reference,
-        "samples": runner.samples,
-        "summary": summary,
-    });
+    let result: Result<(Value, bool), String> = (|| {
+        let cache_conditioning = runner.condition_os_cache()?;
+        runner.run()?;
+        if runner.samples.len() != 7 * REPETITIONS {
+            return Err(format!(
+                "benchmark matrix produced {} measured samples; expected {}",
+                runner.samples.len(),
+                7 * REPETITIONS
+            ));
+        }
+        let semantic_reference = runner
+            .semantic_reference
+            .as_ref()
+            .ok_or_else(|| "benchmark matrix produced no semantic evidence".to_owned())?
+            .report_value()?;
+        let summary = summarize(
+            &runner.times,
+            runner.peak_rss_bytes,
+            binary_bytes.len() as u64,
+            default_jobs,
+            host.blocking,
+        )?;
+        let target_misses = summary
+            .pointer("/targetMisses")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "benchmark summary omitted targetMisses".to_owned())?;
+        let passed = !host.blocking || target_misses.is_empty();
+        let status = if host.blocking {
+            if passed { "PASS" } else { "FAIL" }
+        } else {
+            "REPORT_ONLY"
+        };
+        let report = serde_json::json!({
+            "schemaVersion": "lumin.phase1-foundation-benchmark.v1",
+            "status": status,
+            "blocking": host.blocking,
+            "environment": host.classification,
+            "capturedAtUnixNanoseconds": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
+                .as_nanos()
+                .to_string(),
+            "host": host.details,
+            "osCacheState": "machine-global caches were conditioned by one unmeasured fresh jobs=1 audit and not flushed; cold means fresh repository, state namespace, and process",
+            "osCacheConditioning": cache_conditioning,
+            "scanInvocation": {"include": ["**"], "findingFilters": {}},
+            "toolchain": measurement::python_identity(&python, &script, &host.details)?,
+            "package": {
+                "target": host_target(),
+                "root": package.root.to_string_lossy(),
+                "buildId": package.build_id,
+                "binary": package.binary.to_string_lossy(),
+                "binaryBytes": binary_bytes.len(),
+                "binarySha256": sha256_hex(&binary_bytes),
+            },
+            "fixture": fixture.identity,
+            "observedAvailableParallelism": available_parallelism,
+            "defaultJobs": default_jobs,
+            "workerStackBytes": WORKER_STACK_BYTES,
+            "repetitionsPerMode": REPETITIONS,
+            "semanticTruth": semantic_reference,
+            "samples": runner.samples,
+            "summary": summary,
+        });
 
+        Ok((report, passed))
+    })();
+    if let Some(archive) = &mut runner.archive {
+        archive.finish(result.as_ref().err().map(String::as_str))?;
+    }
     fs::remove_dir_all(&scratch).map_err(|error| {
         format!(
             "cannot remove completed benchmark scratch {}: {error}",
             scratch.display()
         )
     })?;
+    let (report, passed) = result?;
     write_report(&report_path, &report)?;
     Ok((report, passed))
 }
@@ -164,6 +185,29 @@ struct MatrixRunner<'a> {
     times: BTreeMap<&'static str, Vec<u64>>,
     peak_rss_bytes: u64,
     semantic_reference: Option<truth::SemanticDump>,
+    archive: Option<archive::CaptureArchive>,
+    current_capture: Option<PathBuf>,
+}
+
+fn normal_cells() -> Vec<String> {
+    let mut cells = vec!["os-cache-conditioning-jobs-1-0-unmeasured".to_owned()];
+    for repetition in 1..=REPETITIONS {
+        for (mode, setup) in [
+            ("cold-audit-default", None),
+            ("cold-audit-jobs-1", None),
+            ("warm-audit-default", Some("seed")),
+            ("cold-pre-write-default", None),
+            ("warm-pre-write-default", Some("seed")),
+            ("post-write-one-file-default", Some("setup")),
+            ("post-write-32-files-default", Some("setup")),
+        ] {
+            if let Some(setup) = setup {
+                cells.push(format!("{mode}-{repetition}-{setup}"));
+            }
+            cells.push(format!("{mode}-{repetition}-measured"));
+        }
+    }
+    cells
 }
 
 impl MatrixRunner<'_> {
@@ -196,6 +240,7 @@ impl MatrixRunner<'_> {
             &repository,
             &self.fixture.truth,
             truth::Scope::Run { run_id: &run_id },
+            self.capture_path()?,
         )?;
         self.accept_semantics(&dump)?;
         let report = serde_json::json!({
@@ -252,6 +297,7 @@ impl MatrixRunner<'_> {
                 &repository,
                 &self.fixture.truth,
                 truth::Scope::Run { run_id: &run_id },
+                self.capture_path()?,
             )?;
             self.accept_semantics(&dump)?;
             stages.insert("seedProcess".to_owned(), seed.elapsed_nanoseconds.into());
@@ -285,6 +331,7 @@ impl MatrixRunner<'_> {
             &repository,
             &self.fixture.truth,
             truth::Scope::Run { run_id: &run_id },
+            self.capture_path()?,
         )?;
         self.accept_semantics(&dump)?;
         stages.insert(
@@ -329,6 +376,7 @@ impl MatrixRunner<'_> {
                 &repository,
                 &self.fixture.truth,
                 truth::Scope::Run { run_id: &run_id },
+                self.capture_path()?,
             )?;
             self.accept_semantics(&dump)?;
             stages.insert("seedProcess".to_owned(), seed.elapsed_nanoseconds.into());
@@ -360,6 +408,7 @@ impl MatrixRunner<'_> {
                 gate_id: &gate_id,
                 revision,
             },
+            self.capture_path()?,
         )?;
         self.accept_semantics(&dump)?;
         stages.insert(
@@ -420,6 +469,7 @@ impl MatrixRunner<'_> {
                 gate_id: &gate_id,
                 revision: baseline_revision,
             },
+            self.capture_path()?,
         )?;
         self.accept_semantics(&setup_dump)?;
         let setup_validation_ns = elapsed_ns(setup_validation)?;
@@ -457,6 +507,7 @@ impl MatrixRunner<'_> {
                 gate_id: &closed_gate_id,
                 revision,
             },
+            self.capture_path()?,
         )?;
         self.accept_semantics(&dump)?;
         let stages = serde_json::json!({
@@ -491,24 +542,33 @@ impl MatrixRunner<'_> {
     }
 
     fn capture(
-        &self,
+        &mut self,
         repository: &Path,
         arguments: &[OsString],
         mode: &str,
         repetition: usize,
         role: &str,
     ) -> Result<measurement::ProcessMeasurement, String> {
+        let name = format!("{mode}-{repetition}-{role}");
+        let capture = match &mut self.archive {
+            Some(archive) => archive.begin(&name)?,
+            None => self.scratch.join("captures").join(name),
+        };
+        self.current_capture = Some(capture.clone());
         measurement::measure_product(
             self.python,
             self.script,
             self.binary,
             repository,
             arguments,
-            &self
-                .scratch
-                .join("captures")
-                .join(format!("{mode}-{repetition}-{role}")),
+            &capture,
         )
+    }
+
+    fn capture_path(&self) -> Result<&Path, String> {
+        self.current_capture
+            .as_deref()
+            .ok_or_else(|| "no process capture for truth query".to_owned())
     }
 
     fn accept_semantics(&mut self, dump: &truth::SemanticDump) -> Result<(), String> {
@@ -520,6 +580,13 @@ impl MatrixRunner<'_> {
             }
         } else {
             self.semantic_reference = Some(dump.clone());
+        }
+        archive::write_json(
+            &self.capture_path()?.join("semantic-truth.json"),
+            &dump.report_value()?,
+        )?;
+        if let Some(archive) = &mut self.archive {
+            archive.complete()?;
         }
         Ok(())
     }

@@ -1,3 +1,5 @@
+#[macro_use]
+mod audit_profile;
 mod analysis_cache;
 mod audit_publication;
 mod capability_query;
@@ -64,29 +66,58 @@ use extraction::{ExtractionOutput, extract_facts};
 
 const WORKER_STACK_BYTES: usize = 4_194_304;
 
+#[cfg(all(
+    feature = "audit-execution-test-profile",
+    any(
+        feature = "cache-cleanup-test-fault",
+        feature = "collection-ordering-test-perturb",
+        feature = "gate-test-fault",
+        feature = "lifecycle-migration-test-fault",
+        feature = "namespace-test-crash",
+        feature = "publication-test-crash",
+        feature = "retention-test-crash"
+    )
+))]
+compile_error!(
+    "audit-execution-test-profile cannot be combined with fault/crash/perturbation features"
+);
+
 fn with_worker_pool<T: Send>(
     jobs: usize,
     work: impl FnOnce() -> T + Send,
+    #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+        &mut audit_profile::AuditProfiler,
+    >,
 ) -> Result<T, EngineError> {
     if jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    let pool = rayon::ThreadPoolBuilder::new()
+    let builder = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .stack_size(WORKER_STACK_BYTES)
-        .thread_name(|index| format!("lumin-worker-{index}"))
+        .thread_name(|index| format!("lumin-worker-{index}"));
+    audit_phase_begin!(profile, PoolCreate);
+    let pool = builder
         .build()
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pool.install(work))).map_err(
-        |payload| {
+    audit_phase_end!(profile, PoolCreate);
+    #[cfg(feature = "audit-execution-test-profile")]
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.pool(pool.current_num_threads(), WORKER_STACK_BYTES);
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pool.install(work)))
+        .map_err(|payload| {
             let detail = payload
                 .downcast_ref::<&str>()
                 .map(|message| (*message).to_owned())
                 .or_else(|| payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "worker panicked without a string payload".to_owned());
             EngineError::Scheduler(detail)
-        },
-    )
+        });
+    audit_phase_begin!(profile, PoolRelease);
+    drop(pool);
+    audit_phase_end!(profile, PoolRelease);
+    result
 }
 
 pub fn lower_native_repo_path(
@@ -114,6 +145,8 @@ pub struct AuditRequest {
 
 #[derive(Clone, Debug)]
 pub struct AuditResult {
+    #[cfg(feature = "audit-execution-test-profile")]
+    pub audit_diagnostic: lumin_model::audit_diagnostic::AuditPoolObservation,
     pub published: PublishedRun,
     pub repository_root: RepositoryRootIdentity,
     pub evidence: RunEvidence,
@@ -239,14 +272,54 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    with_worker_pool(request.jobs, || audit_in_current_pool(request))?
+    #[cfg(feature = "audit-execution-test-profile")]
+    let mut work_profile = audit_profile::AuditProfiler::default();
+    #[cfg(feature = "audit-execution-test-profile")]
+    let mut pool_profile = audit_profile::AuditProfiler::default();
+    let result = with_worker_pool(
+        request.jobs,
+        || {
+            #[cfg(feature = "audit-execution-test-profile")]
+            let mut profile = Some(&mut work_profile);
+            audit_phase_begin!(profile, AuditWork);
+            let result = audit_in_current_pool(
+                request,
+                #[cfg(feature = "audit-execution-test-profile")]
+                profile.as_deref_mut(),
+            );
+            audit_phase_end!(profile, AuditWork);
+            result
+        },
+        #[cfg(feature = "audit-execution-test-profile")]
+        Some(&mut pool_profile),
+    )?;
+    #[cfg(feature = "audit-execution-test-profile")]
+    let result = result.map(|mut result| {
+        result.audit_diagnostic = pool_profile.finish();
+        result
+            .audit_diagnostic
+            .timings
+            .merge(work_profile.finish().timings);
+        result
+    });
+    result
 }
 
-fn audit_in_current_pool(request: &AuditRequest) -> Result<AuditResult, EngineError> {
+fn audit_in_current_pool(
+    request: &AuditRequest,
+    #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+        &mut audit_profile::AuditProfiler,
+    >,
+) -> Result<AuditResult, EngineError> {
+    audit_phase_begin!(profile, Admission);
     lumin_inventory::validate_caller_paths_lexically(&request.entries)?;
     let admission = repository_admission(&request.root)?;
     lumin_inventory::validate_caller_entries(&admission.canonical_root, &request.entries)?;
+    audit_phase_end!(profile, Admission);
+    audit_phase_begin!(profile, StoreOpen);
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    audit_phase_end!(profile, StoreOpen);
+    audit_phase_begin!(profile, EntryIdentities);
     let context = repository_context_from_admission(admission, store);
     let store = &context.store;
     let reserved_state_lookup = reserved_state_identity_lookup(store);
@@ -255,7 +328,10 @@ fn audit_in_current_pool(request: &AuditRequest) -> Result<AuditResult, EngineEr
         &request.entries,
         &reserved_state_lookup,
     )?;
+    audit_phase_end!(profile, EntryIdentities);
+    audit_phase_begin!(profile, AttemptBegin);
     let mut attempt = store.begin_attempt()?;
+    audit_phase_end!(profile, AttemptBegin);
     let inventory_request = InventoryRequest {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
@@ -263,12 +339,15 @@ fn audit_in_current_pool(request: &AuditRequest) -> Result<AuditResult, EngineEr
         entries: request.entries.clone(),
         dependency_intents: Vec::new(),
     };
+    audit_phase_begin!(profile, Capture);
     let capture = match capture_admitted_repository_in_current_pool(
         &context.root,
         context.repository_root.clone(),
         &inventory_request,
         request.resolution_profile,
         &reserved_state_lookup,
+        #[cfg(feature = "audit-execution-test-profile")]
+        profile.as_deref_mut(),
     ) {
         Ok(capture) => capture,
         Err(error) => {
@@ -281,12 +360,16 @@ fn audit_in_current_pool(request: &AuditRequest) -> Result<AuditResult, EngineEr
             return Err(error);
         }
     };
+    audit_phase_end!(profile, Capture);
+    audit_phase_begin!(profile, Publication);
     let published = match audit_publication::publish(
         store,
         &mut attempt,
         &context.root,
         &reserved_state_lookup,
         &capture.snapshot,
+        #[cfg(feature = "audit-execution-test-profile")]
+        profile.as_deref_mut(),
     ) {
         Ok(published) => published,
         Err(error @ StoreError::RunRetentionState(_)) => {
@@ -302,8 +385,11 @@ fn audit_in_current_pool(request: &AuditRequest) -> Result<AuditResult, EngineEr
             return Err(EngineError::Store(error));
         }
     };
+    audit_phase_end!(profile, Publication);
     let evidence = capture.snapshot.evidence;
     Ok(AuditResult {
+        #[cfg(feature = "audit-execution-test-profile")]
+        audit_diagnostic: Default::default(),
         published,
         repository_root: context.repository_root.clone(),
         evidence,
@@ -411,15 +497,22 @@ fn capture_admitted_repository(
     resolution_profile: Option<ResolutionProfile>,
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<RepositoryCapture, EngineError> {
-    with_worker_pool(jobs, || {
-        capture_admitted_repository_in_current_pool(
-            root,
-            repository_root,
-            request,
-            resolution_profile,
-            reserved_state_lookup,
-        )
-    })?
+    with_worker_pool(
+        jobs,
+        || {
+            capture_admitted_repository_in_current_pool(
+                root,
+                repository_root,
+                request,
+                resolution_profile,
+                reserved_state_lookup,
+                #[cfg(feature = "audit-execution-test-profile")]
+                None,
+            )
+        },
+        #[cfg(feature = "audit-execution-test-profile")]
+        None,
+    )?
 }
 
 fn capture_admitted_repository_in_current_pool(
@@ -428,6 +521,9 @@ fn capture_admitted_repository_in_current_pool(
     request: &InventoryRequest,
     resolution_profile: Option<ResolutionProfile>,
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+    #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+        &mut audit_profile::AuditProfiler,
+    >,
 ) -> Result<RepositoryCapture, EngineError> {
     let tier = build_scan_invocation_tier(request, resolution_profile);
     let mut session = RepositoryAnalysisSession::start(
@@ -436,14 +532,32 @@ fn capture_admitted_repository_in_current_pool(
         request,
         tier,
         reserved_state_lookup,
+        #[cfg(feature = "audit-execution-test-profile")]
+        profile.as_deref_mut(),
     )?;
     loop {
-        match session.next_step(resolution_profile)? {
+        match session.next_step(
+            resolution_profile,
+            #[cfg(feature = "audit-execution-test-profile")]
+            profile.as_deref_mut(),
+        )? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
-                session.capture_demands(root, demands)?;
+                session.capture_demands(
+                    root,
+                    demands,
+                    #[cfg(feature = "audit-execution-test-profile")]
+                    profile.as_deref_mut(),
+                )?;
             }
             RepositoryAnalysisStep::Finished(resolver) => {
-                return session.finish(resolver);
+                audit_phase_begin!(profile, Finish);
+                let result = session.finish(
+                    resolver,
+                    #[cfg(feature = "audit-execution-test-profile")]
+                    profile.as_deref_mut(),
+                );
+                audit_phase_end!(profile, Finish);
+                return result;
             }
         }
     }
@@ -504,13 +618,18 @@ impl RepositoryAnalysisSession {
         request: &InventoryRequest,
         scan_invocation: ScanInvocationTier,
         reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+        #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+            &mut audit_profile::AuditProfiler,
+        >,
     ) -> Result<Self, EngineError> {
+        audit_phase_begin!(profile, Inventory);
         let inventory = lumin_inventory::begin_scan_in_current_pool_with_reserved_state_lookup(
             root,
             request,
             reserved_state_lookup,
         )?
         .finish(root)?;
+        audit_phase_end!(profile, Inventory);
         Self::start_with_inventory(
             repository_root,
             inventory,
@@ -538,13 +657,18 @@ impl RepositoryAnalysisSession {
     fn next_step(
         &mut self,
         resolution_profile: Option<ResolutionProfile>,
+        #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+            &mut audit_profile::AuditProfiler,
+        >,
     ) -> Result<RepositoryAnalysisStep, EngineError> {
+        audit_phase_begin!(profile, Profiles);
         let profile_selection = lumin_resolve::select_resolution_profiles(
             &self.inventory.sources,
             &self.inventory.config,
             &self.repository_root,
             resolution_profile,
         )?;
+        audit_phase_end!(profile, Profiles);
         if !profile_selection.demands.is_empty() {
             if self.extraction.is_some() {
                 let paths = profile_selection
@@ -560,11 +684,13 @@ impl RepositoryAnalysisSession {
                 .map(RepositoryAnalysisStep::NeedsInputs);
         }
         if self.extraction.is_none() {
+            audit_phase_begin!(profile, Extraction);
             let extraction = extract_facts(
                 &self.inventory.sources,
                 &self.inventory.config,
                 &profile_selection.profiles,
             )?;
+            audit_phase_end!(profile, Extraction);
             self.js_parse_product_count = self
                 .js_parse_product_count
                 .checked_add(extraction.js_parse_product_count)
@@ -575,6 +701,7 @@ impl RepositoryAnalysisSession {
             .extraction
             .as_ref()
             .ok_or(EngineError::ExtractionUnavailable)?;
+        audit_phase_begin!(profile, Resolution);
         let output = lumin_resolve::resolve_all(
             &self.inventory.sources,
             &self.inventory.physical_path_redirects,
@@ -584,6 +711,7 @@ impl RepositoryAnalysisSession {
             &self.repository_root,
             resolution_profile,
         )?;
+        audit_phase_end!(profile, Resolution);
         if output.demands.is_empty() {
             Ok(RepositoryAnalysisStep::Finished(output))
         } else {
@@ -622,17 +750,28 @@ impl RepositoryAnalysisSession {
         &mut self,
         root: &Path,
         demands: Vec<ConfigDemand>,
+        #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+            &mut audit_profile::AuditProfiler,
+        >,
     ) -> Result<(), EngineError> {
+        audit_phase_begin!(profile, DemandCapture);
         capture_config_demands(
             root,
             &mut self.inventory,
             demands,
             &self.reserved_state_lookup,
         )?;
+        audit_phase_end!(profile, DemandCapture);
         Ok(())
     }
 
-    fn finish(mut self, resolver: ResolverOutput) -> Result<RepositoryCapture, EngineError> {
+    fn finish(
+        mut self,
+        resolver: ResolverOutput,
+        #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+            &mut audit_profile::AuditProfiler,
+        >,
+    ) -> Result<RepositoryCapture, EngineError> {
         let extraction = self
             .extraction
             .take()
@@ -652,6 +791,7 @@ impl RepositoryAnalysisSession {
             resolver_limitations,
         );
 
+        audit_phase_begin!(profile, Graph);
         let graph = lumin_graph::build(
             &self.inventory.sources,
             &extraction.facts,
@@ -659,12 +799,15 @@ impl RepositoryAnalysisSession {
             &package_surfaces,
             &limitations,
         );
+        audit_phase_end!(profile, Graph);
+        audit_phase_begin!(profile, DeadCode);
         let findings = lumin_dead::analyze(
             &self.inventory.sources,
             &graph,
             &self.inventory.config,
             &limitations,
         );
+        audit_phase_end!(profile, DeadCode);
         let state = dead_code_capability_state(&limitations);
         let mut capabilities = vec![
             CapabilityRecord {

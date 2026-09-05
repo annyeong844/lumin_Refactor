@@ -7,6 +7,12 @@
       "class": "production",
       "path": "crates/application/cli",
       "features": {
+        "audit-execution-profile-probe": [],
+        "audit-execution-test-profile": [
+          "lumin-engine/audit-execution-test-profile",
+          "lumin-model/audit-execution-test-profile",
+          "lumin-protocol/audit-execution-test-profile"
+        ],
         "collection-ordering-test-perturb": [
           "lumin-engine/collection-ordering-test-perturb",
           "lumin-protocol/collection-ordering-test-perturb"
@@ -247,6 +253,7 @@
       "class": "production",
       "path": "crates/application/engine",
       "features": {
+        "audit-execution-test-profile": ["lumin-model/audit-execution-test-profile"],
         "cache-cleanup-test-fault": [
           "lumin-store/cache-cleanup-test-fault"
         ],
@@ -896,7 +903,7 @@
       "name": "lumin-model",
       "class": "production",
       "path": "crates/foundation/model",
-      "features": {},
+      "features": {"audit-execution-test-profile": []},
       "dependencies": [
         {
           "origin": "workspace-inherited",
@@ -959,6 +966,7 @@
       "class": "production",
       "path": "crates/application/protocol",
       "features": {
+        "audit-execution-test-profile": ["lumin-model/audit-execution-test-profile"],
         "collection-ordering-test-perturb": []
       },
       "dependencies": [
@@ -1445,7 +1453,7 @@
           "requirement": null,
           "optional": false,
           "defaultFeatures": true,
-          "features": null,
+          "features": ["audit-execution-test-profile"],
           "sourceKind": "workspace",
           "resolution": {
             "kind": "workspace",

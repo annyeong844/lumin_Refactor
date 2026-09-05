@@ -100,7 +100,12 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    super::with_worker_pool(request.jobs, || open_write_gate_in_current_pool(request))?
+    super::with_worker_pool(
+        request.jobs,
+        || open_write_gate_in_current_pool(request),
+        #[cfg(feature = "audit-execution-test-profile")]
+        None,
+    )?
 }
 
 fn open_write_gate_in_current_pool(
@@ -705,17 +710,22 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             } => (*gate, transitions, active_gates),
         };
     let jobs = gate.analysis_options.jobs;
-    super::with_worker_pool(jobs, || {
-        close_write_gate_in_current_pool(
-            request,
-            &request_digest,
-            &context,
-            &operation,
-            gate,
-            transitions,
-            active_gates,
-        )
-    })?
+    super::with_worker_pool(
+        jobs,
+        || {
+            close_write_gate_in_current_pool(
+                request,
+                &request_digest,
+                &context,
+                &operation,
+                gate,
+                transitions,
+                active_gates,
+            )
+        },
+        #[cfg(feature = "audit-execution-test-profile")]
+        None,
+    )?
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1413,7 +1423,12 @@ fn capture_reserved_repository(
                         )? {
                             return Ok(outcome);
                         }
-                        session.capture_demands(root, demands)?;
+                        session.capture_demands(
+                            root,
+                            demands,
+                            #[cfg(feature = "audit-execution-test-profile")]
+                            None,
+                        )?;
                         continue;
                     }
                     analysis_cache::ReplayedAnalysisStep::Finished(capture) => {
@@ -1426,7 +1441,11 @@ fn capture_reserved_repository(
                     }
                 }
             }
-            match session.next_step(options.resolution_profile)? {
+            match session.next_step(
+                options.resolution_profile,
+                #[cfg(feature = "audit-execution-test-profile")]
+                None,
+            )? {
                 RepositoryAnalysisStep::NeedsInputs(demands) => {
                     analysis_cache::store_demands(
                         store,
@@ -1446,10 +1465,19 @@ fn capture_reserved_repository(
                     )? {
                         return Ok(outcome);
                     }
-                    session.capture_demands(root, demands)?;
+                    session.capture_demands(
+                        root,
+                        demands,
+                        #[cfg(feature = "audit-execution-test-profile")]
+                        None,
+                    )?;
                 }
                 RepositoryAnalysisStep::Finished(resolver) => {
-                    let capture = session.finish(resolver)?;
+                    let capture = session.finish(
+                        resolver,
+                        #[cfg(feature = "audit-execution-test-profile")]
+                        None,
+                    )?;
                     analysis_cache::store_finished(
                         store,
                         &cache_context,

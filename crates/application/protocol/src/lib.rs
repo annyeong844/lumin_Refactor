@@ -1,3 +1,5 @@
+#[cfg(feature = "audit-execution-test-profile")]
+pub mod audit_diagnostic;
 mod cursor;
 mod gate_query;
 mod path_dto;

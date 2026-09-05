@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -236,6 +237,47 @@ class DocumentationTests(unittest.TestCase):
             self.assertEqual(len(errors), 2)
             self.assertIn("target is missing", errors[0])
             self.assertIn("escapes repository", errors[1])
+
+
+class DiagnosticStepControlTests(unittest.TestCase):
+    def test_budget_and_diagnostic_failures_keep_the_job_failed_and_uploads_running(self) -> None:
+        workflow = SCRIPT.parents[3] / ".github/workflows/ci.yml"
+        source = workflow.read_text(encoding="utf-8")
+        release = source.split("  release:", 1)[1].split("  required:", 1)[0]
+        self.assertNotIn("continue-on-error", release)
+        blocks = dict(re.findall(r"      - name: ([^\n]+)\n(.*?)(?=\n      - name: |\Z)", release, re.S))
+
+        def admitted(name: str, outcomes: dict[str, str]) -> bool:
+            block = blocks[name]
+            condition = re.search(r"if: \$\{\{ (.*?) \}\}", block)
+            if condition is None:
+                return all(value == "success" for value in outcomes.values())
+            expression = condition.group(1)
+            expression = expression.replace("always()", "True").replace("!cancelled()", "True")
+            expression = expression.replace("matrix.package_target", repr("windows-x64"))
+            expression = re.sub(r"steps\.([a-z_]+)\.outcome", lambda match: repr(outcomes.get(match.group(1), "skipped")), expression)
+            expression = expression.replace("&&", " and ")
+            # The test evaluates only this closed, repository-authored boolean grammar.
+            self.assertRegex(expression, r"^[A-Za-z_0-9' =\-]+$")
+            return bool(eval(expression, {"__builtins__": {}}, {}))
+
+        for benchmark, diagnostic in (("failure", "success"), ("success", "failure")):
+            with self.subTest(benchmark=benchmark, diagnostic=diagnostic):
+                outcomes = dict.fromkeys(("control_build", "package_stage", "package_probe", "skill_probe"), "success")
+                outcomes["benchmark"] = benchmark
+                self.assertTrue(admitted("Build isolated Windows audit diagnostic", outcomes))
+                outcomes["diagnostic_build"] = "success"
+                self.assertTrue(admitted("Probe diagnostic public transport", outcomes))
+                outcomes["diagnostic_probe"] = "success"
+                self.assertTrue(admitted("Diagnose Windows cold audit", outcomes))
+                outcomes["diagnostic"] = diagnostic
+                self.assertTrue(admitted("Retain benchmark report", outcomes))
+                self.assertTrue(admitted("Retain Windows diagnostic packet even on failure", outcomes))
+                self.assertFalse(all(value == "success" for value in outcomes.values()))
+                self.assertIn("lumin-foundation-captures-", blocks["Retain benchmark report"])
+                self.assertIn("lumin-audit-diagnostic-captures/", blocks["Retain Windows diagnostic packet even on failure"])
+        outcomes["package_probe"] = "failure"
+        self.assertFalse(admitted("Build isolated Windows audit diagnostic", outcomes))
 
 
 if __name__ == "__main__":

@@ -72,6 +72,35 @@ const RELEASE_BENCHMARK_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- benchmark foundation"
 );
+// Reviewed W2 orchestration is one indivisible body. Do not allow its shell
+// fragments individually: an inserted command or changed failure check must fail.
+const DIAGNOSTIC_BUILD_BODY: &str = r#"        run: |
+          & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --features audit-execution-test-profile --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-model -p lumin-engine --lib --features audit-execution-test-profile audit_ --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $incompatible = & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo check -p lumin-cli --bin lumin --features audit-execution-test-profile,lifecycle-test-fault --locked 2>&1
+          $incompatibleExit = $LASTEXITCODE
+          $incompatible | ForEach-Object { Write-Output $_ }
+          if ($incompatibleExit -eq 0 -or -not ($incompatible -match 'audit-execution-test-profile cannot be combined')) { throw 'incompatible diagnostic features were not refused by their owner' }
+          $record = [ordered]@{
+            sourceRevision = '${{ github.sha }}'
+            lockfileSha256 = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+            controlFeatures = @()
+            diagnosticFeatures = @('audit-execution-test-profile')
+            target = 'x86_64-pc-windows-msvc'
+            toolchain = '1.96.0'
+            controlCommand = 'cargo build -p lumin-cli --release --locked'
+            diagnosticCommand = 'cargo build -p lumin-cli --release --features audit-execution-test-profile --locked'
+            controlSha256 = (Get-FileHash "$env:RUNNER_TEMP/lumin-package/bin/lumin.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+            diagnosticSha256 = (Get-FileHash "$env:CARGO_TARGET_DIR/release/lumin.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $recordPath = "$env:RUNNER_TEMP/lumin-audit-diagnostic-build.json"
+          if (Test-Path -LiteralPath $recordPath) { throw 'diagnostic build record already exists' }
+          [System.IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
+          # The incompatible-feature check above is an expected native failure.
+          exit 0
+"#;
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
@@ -320,7 +349,12 @@ fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
         violations.push(format!("guarded job {name} lacks pinned Python setup"));
     }
 
-    for line in run_commands(block) {
+    let ordinary_block = if name == "release" {
+        block.replacen(DIAGNOSTIC_BUILD_BODY, "", 1)
+    } else {
+        block.to_owned()
+    };
+    for line in run_commands(&ordinary_block) {
         if line.contains("tools/xtask/bootstrap/source_provenance.py") {
             validate_guard_command(name, &line, violations);
         }
@@ -948,7 +982,6 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
         "package_target: windows-x64",
         "benchmark_environment: windows-ntfs",
         "binary_path: release/lumin.exe",
-        "LUMIN_BUILD_REVISION: ${{ github.sha }}",
     ] {
         if lines.iter().filter(|line| **line == required).count() != 1 {
             violations.push(format!(
@@ -965,7 +998,32 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
             "LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}",
             2,
         ),
-        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 4),
+        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 5),
+        ("LUMIN_BUILD_REVISION: ${{ github.sha }}", 2),
+        (
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-audit-diagnostic-target",
+            1,
+        ),
+        (
+            "LUMIN_AUDIT_CONTROL_BINARY: ${{ runner.temp }}/lumin-package/bin/lumin.exe",
+            1,
+        ),
+        (
+            "LUMIN_AUDIT_DIAGNOSTIC_BINARY: ${{ runner.temp }}/lumin-audit-diagnostic-target/release/lumin.exe",
+            2,
+        ),
+        (
+            "LUMIN_AUDIT_DIAGNOSTIC_BUILD_RECORD: ${{ runner.temp }}/lumin-audit-diagnostic-build.json",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_CAPTURE_ROOT: ${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_CAPTURE_ROOT: ${{ runner.temp }}/lumin-audit-diagnostic-captures",
+            1,
+        ),
         (
             "LUMIN_BENCHMARK_ENVIRONMENT: ${{ matrix.benchmark_environment }}",
             1,
@@ -976,19 +1034,26 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
         ),
         (
             "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
-            1,
+            2,
         ),
         (
             "name: lumin-foundation-benchmark-${{ matrix.package_target }}",
             1,
         ),
         (
-            "path: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json",
+            "${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json",
             1,
         ),
-        ("if-no-files-found: error", 1),
-        ("retention-days: 90", 1),
-        ("compression-level: 0", 1),
+        (
+            "${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}/",
+            1,
+        ),
+        ("${{ runner.temp }}/lumin-audit-diagnostic-captures/", 1),
+        ("${{ runner.temp }}/lumin-audit-diagnostic-report.json", 1),
+        ("${{ runner.temp }}/lumin-audit-diagnostic-build.json", 1),
+        ("if-no-files-found: error", 2),
+        ("retention-days: 90", 2),
+        ("compression-level: 0", 2),
     ] {
         if lines.iter().filter(|line| **line == binding).count() != count {
             violations.push(format!(
@@ -997,6 +1062,12 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
         }
     }
 
+    if block.matches(DIAGNOSTIC_BUILD_BODY).count() != 1 || block.contains("continue-on-error") {
+        violations.push(
+            "release must retain the exact isolated diagnostic build and failure evidence"
+                .to_owned(),
+        );
+    }
     let commands = run_commands(block);
     let compiler = commands
         .iter()
@@ -1203,6 +1274,45 @@ mod tests {
     fn checked_workflow_has_no_routing_violation() -> Result<(), Box<dyn std::error::Error>> {
         let found = violations(&workflow()?);
         assert!(found.is_empty(), "{found:#?}");
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_build_and_archives_cannot_bypass_the_reviewed_isolation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let original = workflow()?;
+        for (before, after) in [
+            (DIAGNOSTIC_BUILD_BODY, ""),
+            ("$incompatibleExit -eq 0", "$incompatibleExit -ne 0"),
+            ("exit 0\n", "cargo build --release\n"),
+            (
+                "controlFeatures = @()",
+                "controlFeatures = @('audit-execution-test-profile')",
+            ),
+            (
+                "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-audit-diagnostic-target",
+                "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target",
+            ),
+            (
+                "${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}/",
+                "",
+            ),
+            ("${{ runner.temp }}/lumin-audit-diagnostic-captures/", ""),
+        ] {
+            assert!(original.contains(before), "fixture did not mutate {before}");
+            let found = violations(&original.replace(before, after));
+            assert!(!found.is_empty(), "accepted diagnostic mutation: {before}");
+        }
+        // A standalone early-success command cannot borrow the complete body's exception.
+        let source = original.replace(
+            "        id: benchmark\n",
+            "        id: benchmark\n        continue-on-error: true\n",
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|v| v.contains("diagnostic build"))
+        );
         Ok(())
     }
 

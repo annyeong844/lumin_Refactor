@@ -692,6 +692,7 @@ jobs:
           "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
 
       - name: Build release binary
+        id: control_build
         shell: pwsh
         env:
           LUMIN_BUILD_REVISION: ${{ github.sha }}
@@ -702,6 +703,7 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --features lifecycle-test-fault --locked'
 
       - name: Stage packaged distribution
+        id: package_stage
         shell: pwsh
         env:
           LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}
@@ -709,6 +711,7 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check stage ${{ matrix.package_target }}'
 
       - name: Probe packaged binary without runtime build tools
+        id: package_probe
         shell: pwsh
         env:
           LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}
@@ -716,6 +719,7 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check ${{ matrix.package_target }}'
 
       - name: Probe packaged skills
+        id: skill_probe
         shell: pwsh
         env:
           LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}
@@ -723,19 +727,92 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check skills'
 
       - name: Benchmark packaged binary
+        id: benchmark
         shell: pwsh
         env:
           LUMIN_BENCHMARK_ENVIRONMENT: ${{ matrix.benchmark_environment }}
           LUMIN_BENCHMARK_REPORT: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json
+          LUMIN_BENCHMARK_CAPTURE_ROOT: ${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}
           LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- benchmark foundation'
+
+      - name: Build isolated Windows audit diagnostic
+        id: diagnostic_build
+        if: ${{ always() && !cancelled() && matrix.package_target == 'windows-x64' && steps.control_build.outcome == 'success' && steps.package_stage.outcome == 'success' && steps.package_probe.outcome == 'success' && steps.skill_probe.outcome == 'success' }}
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-audit-diagnostic-target
+          LUMIN_BUILD_REVISION: ${{ github.sha }}
+        run: |
+          & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --features audit-execution-test-profile --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-model -p lumin-engine --lib --features audit-execution-test-profile audit_ --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $incompatible = & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo check -p lumin-cli --bin lumin --features audit-execution-test-profile,lifecycle-test-fault --locked 2>&1
+          $incompatibleExit = $LASTEXITCODE
+          $incompatible | ForEach-Object { Write-Output $_ }
+          if ($incompatibleExit -eq 0 -or -not ($incompatible -match 'audit-execution-test-profile cannot be combined')) { throw 'incompatible diagnostic features were not refused by their owner' }
+          $record = [ordered]@{
+            sourceRevision = '${{ github.sha }}'
+            lockfileSha256 = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+            controlFeatures = @()
+            diagnosticFeatures = @('audit-execution-test-profile')
+            target = 'x86_64-pc-windows-msvc'
+            toolchain = '1.96.0'
+            controlCommand = 'cargo build -p lumin-cli --release --locked'
+            diagnosticCommand = 'cargo build -p lumin-cli --release --features audit-execution-test-profile --locked'
+            controlSha256 = (Get-FileHash "$env:RUNNER_TEMP/lumin-package/bin/lumin.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+            diagnosticSha256 = (Get-FileHash "$env:CARGO_TARGET_DIR/release/lumin.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $recordPath = "$env:RUNNER_TEMP/lumin-audit-diagnostic-build.json"
+          if (Test-Path -LiteralPath $recordPath) { throw 'diagnostic build record already exists' }
+          [System.IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
+          # The incompatible-feature check above is an expected native failure.
+          exit 0
+
+      - name: Probe diagnostic public transport
+        id: diagnostic_probe
+        if: ${{ always() && !cancelled() && steps.diagnostic_build.outcome == 'success' }}
+        shell: pwsh
+        env:
+          LUMIN_AUDIT_DIAGNOSTIC_BINARY: ${{ runner.temp }}/lumin-audit-diagnostic-target/release/lumin.exe
+          LUMIN_AUDIT_CONTROL_BINARY: ${{ runner.temp }}/lumin-package/bin/lumin.exe
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-cli --test audit_diagnostic --features audit-execution-profile-probe --locked'
+
+      - name: Diagnose Windows cold audit
+        id: diagnostic
+        if: ${{ always() && !cancelled() && steps.diagnostic_build.outcome == 'success' && steps.diagnostic_probe.outcome == 'success' }}
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
+          LUMIN_AUDIT_DIAGNOSTIC_BINARY: ${{ runner.temp }}/lumin-audit-diagnostic-target/release/lumin.exe
+          LUMIN_AUDIT_DIAGNOSTIC_BUILD_RECORD: ${{ runner.temp }}/lumin-audit-diagnostic-build.json
+          LUMIN_BENCHMARK_ENVIRONMENT: windows-ntfs
+          LUMIN_BENCHMARK_REPORT: ${{ runner.temp }}/lumin-audit-diagnostic-report.json
+          LUMIN_BENCHMARK_CAPTURE_ROOT: ${{ runner.temp }}/lumin-audit-diagnostic-captures
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- benchmark foundation --diagnose-cold-audit'
 
       - name: Retain benchmark report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lumin-foundation-benchmark-${{ matrix.package_target }}
-          path: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json
+          path: |
+            ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json
+            ${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Retain Windows diagnostic packet even on failure
+        if: ${{ always() && matrix.package_target == 'windows-x64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lumin-audit-diagnostic-windows-x64
+          path: |
+            ${{ runner.temp }}/lumin-audit-diagnostic-build.json
+            ${{ runner.temp }}/lumin-audit-diagnostic-report.json
+            ${{ runner.temp }}/lumin-audit-diagnostic-captures/
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
