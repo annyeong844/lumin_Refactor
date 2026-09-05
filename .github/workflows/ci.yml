@@ -333,6 +333,9 @@ jobs:
           - name: Windows store retention
             suite: store-lib
             shard: 3
+          - name: Windows store evidence
+            suite: store-lib
+            shard: 4
     runs-on: windows-2022
     steps:
       - name: Initialize isolated Cargo paths
@@ -384,7 +387,7 @@ jobs:
       - name: Test Windows store unit shard
         if: ${{ matrix.suite == 'store-lib' }}
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --suite store-lib --index ${{ matrix.shard }} --count 4'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --suite store-lib --index ${{ matrix.shard }} --count 5'
 
   windows-integration:
     name: Windows integration ${{ matrix.shard }}/6
@@ -667,6 +670,14 @@ jobs:
         if: ${{ matrix.package_target == 'linux-x64' }}
         shell: pwsh
         run: rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0
+
+      - name: Install Linux musl C compiler
+        if: ${{ matrix.package_target == 'linux-x64' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes musl-tools
+          x86_64-linux-musl-gcc --version
 
       - name: Record trusted tools
         shell: pwsh

@@ -13,7 +13,19 @@ The [Windows NTFS and WSL2 ext4 packet](probes/phase1-foundation-benchmark-local
 retains two complete numeric matrices. Both contain seven modes with three
 repetitions, the frozen fixture, and the same complete authored finding truth
 and stable IDs. Each measured time, RSS, executable-size, and scaling budget
-passes. Native Linux CI must still run the staged Linux-musl distribution.
+passes for that local candidate, not for every supported host or a later build.
+
+The [first public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/33946327448)
+on `2a2e9c837f7ef7723c459b574c1bc6ced4edd85d` fails the Windows scaling
+budget with four default workers: cold default median `3,469,498,100 ns`,
+`jobs=1` median `3,113,171,700 ns`, ratio `1.114457676716` against `0.75`.
+Its other numeric budgets and complete semantic oracle pass. The retained CI
+artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
+`963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
+This is a blocking miss, not measurement noise to discard. Native Linux CI
+also lacks a completed matrix because its initial musl C compiler setup was
+missing. The repaired candidate still requires fresh blocking matrices; the
+earlier local reports do not establish their outcome.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It

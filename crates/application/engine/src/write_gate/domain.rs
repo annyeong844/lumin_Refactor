@@ -465,6 +465,14 @@ pub(super) fn observe_write_domain_from_semantic_inputs(
     let mut drift_paths = Vec::new();
 
     for input in current_inputs {
+        if !matches!(
+            input.state,
+            SemanticInputState::Source
+                | SemanticInputState::ConfigPresent
+                | SemanticInputState::CapabilityTarget
+        ) {
+            continue;
+        }
         let Some(identity) = &input.physical_identity else {
             continue;
         };

@@ -1680,23 +1680,30 @@ fn pre_write_final_validation(
     let final_lookup = validation
         .reserved_state_lookup
         .for_final_validation(reserved_identities);
-    // The complete inventory below reopens, hashes, and authenticates every source and config
-    // input. Repeating both topology and payload validation for those same records here made final
-    // sealing perform three whole-repository passes. Capability targets are intentionally outside
-    // the compiled source inventory, so they remain an explicit independent validation set.
-    let capability_target_inputs = validation
+    // A fresh inventory captures sources, but it does not replay resolver demands. Validate those
+    // retained inputs independently, including absent and nonregular configuration candidates.
+    // Keep the old topology check separate from the new observation so real drift can be sealed.
+    let demanded_inputs = validation
         .captured_inputs
         .iter()
-        .filter(|input| input.state == SemanticInputState::CapabilityTarget)
+        .filter(|input| input.state != SemanticInputState::Source)
         .cloned()
         .collect::<Vec<_>>();
-    let mut semantic_validation_drift = match stale_complete_semantic_input_paths(
-        root,
-        &validation.bindings,
-        &capability_target_inputs,
-        &final_lookup,
-        reserved_identities,
-    ) {
+    let semantic_validation_drift =
+        stale_captured_input_topology_paths(root, &validation.captured_inputs, &final_lookup)
+            .and_then(|mut paths| {
+                paths.extend(stale_complete_semantic_input_paths(
+                    root,
+                    &validation.bindings,
+                    &demanded_inputs,
+                    &final_lookup,
+                    reserved_identities,
+                )?);
+                paths.sort();
+                paths.dedup();
+                Ok(paths)
+            });
+    let mut semantic_validation_drift = match semantic_validation_drift {
         Ok(paths) => paths,
         Err(error) => {
             return (
@@ -1708,10 +1715,12 @@ fn pre_write_final_validation(
         }
     };
 
+    let current_lookup =
+        lumin_inventory::ReservedStateIdentityLookup::from_identities(reserved_identities.clone());
     let current_inventory = lumin_inventory::begin_scan_in_current_pool_with_reserved_state_lookup(
         root,
         &validation.inventory_request,
-        &final_lookup,
+        &current_lookup,
     )
     .and_then(|pending| pending.finish(root));
     match current_inventory {
@@ -1766,7 +1775,7 @@ fn pre_write_final_validation(
             observed_semantic_inputs.dedup();
 
             for input in &validation.captured_inputs {
-                if input.state == SemanticInputState::CapabilityTarget
+                if input.state != SemanticInputState::Source
                     && !semantic_validation_drift.contains(&input.path)
                     && !observed_semantic_inputs
                         .iter()

@@ -424,29 +424,12 @@ impl NamespaceState {
             FileExt::lock_shared(lock.file()).map_err(io_error)?;
         }
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
-        let result = match purpose {
+        let admission = match purpose {
             LockPurpose::Ordinary => migration::require_idle(&guard)
-                .and_then(|()| guard.validate_complete_at_namespace_test_boundary())
-                .and_then(|()| operation(&guard)),
+                .and_then(|()| guard.validate_complete_at_namespace_test_boundary()),
             LockPurpose::Admission => migration::admit_ordinary(&guard)
-                .and_then(|()| guard.validate_complete_at_namespace_test_boundary())
-                .and_then(|()| operation(&guard)),
-            LockPurpose::Migration => operation(&guard),
-            #[cfg(any(
-                test,
-                feature = "logical-store-snapshot-test",
-                feature = "namespace-test-crash",
-                feature = "retention-test-crash"
-            ))]
-            LockPurpose::Observation => migration::require_idle(&guard)
-                .and_then(|()| guard.validate_bound_entries())
-                .and_then(|()| operation(&guard)),
-        };
-        let final_validation = match purpose {
-            LockPurpose::Ordinary | LockPurpose::Admission => {
-                migration::require_idle(&guard).and_then(|()| guard.validate_complete())
-            }
-            LockPurpose::Migration => guard.validate_bound_entries(),
+                .and_then(|()| guard.validate_complete_at_namespace_test_boundary()),
+            LockPurpose::Migration => Ok(()),
             #[cfg(any(
                 test,
                 feature = "logical-store-snapshot-test",
@@ -455,6 +438,29 @@ impl NamespaceState {
             ))]
             LockPurpose::Observation => {
                 migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
+            }
+        };
+        let admitted = admission.is_ok();
+        let result = admission.and_then(|()| operation(&guard));
+        let final_validation = if !admitted {
+            // A refused schema must not be reopened by redb in writable mode. Even opening and
+            // closing that handle can change its recovery metadata without a user transaction.
+            guard.validate_bound_entries()
+        } else {
+            match purpose {
+                LockPurpose::Ordinary | LockPurpose::Admission => {
+                    migration::require_idle(&guard).and_then(|()| guard.validate_complete())
+                }
+                LockPurpose::Migration => guard.validate_bound_entries(),
+                #[cfg(any(
+                    test,
+                    feature = "logical-store-snapshot-test",
+                    feature = "namespace-test-crash",
+                    feature = "retention-test-crash"
+                ))]
+                LockPurpose::Observation => {
+                    migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
+                }
             }
         };
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);

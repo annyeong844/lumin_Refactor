@@ -80,7 +80,16 @@ const WINDOWS_INTEGRATION_RUN: &str = concat!(
 const WINDOWS_STORE_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
-    "--suite store-lib --index ${{ matrix.shard }} --count 4"
+    "--suite store-lib --index ${{ matrix.shard }} --count 5"
+);
+const LINUX_MUSL_C_SETUP: &str = concat!(
+    "      - name: Install Linux musl C compiler\n",
+    "        if: ${{ matrix.package_target == 'linux-x64' }}\n",
+    "        shell: bash\n",
+    "        run: |\n",
+    "          sudo apt-get update\n",
+    "          sudo apt-get install --no-install-recommends --yes musl-tools\n",
+    "          x86_64-linux-musl-gcc --version\n",
 );
 const ALL_TARGET_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
@@ -407,6 +416,9 @@ fn is_reviewed_run_command(line: &str) -> bool {
         "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
         "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
         "rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0",
+        "sudo apt-get update",
+        "sudo apt-get install --no-install-recommends --yes musl-tools",
+        "x86_64-linux-musl-gcc --version",
         "$cargo = rustup which --toolchain 1.96.0 cargo",
         "$clippy = rustup which --toolchain 1.96.0 cargo-clippy",
         "$python = & \"$env:SETUP_PYTHON\" -I -S -c \"import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))\"",
@@ -740,6 +752,7 @@ fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut V
         ("Windows store gate", "store-lib", 1),
         ("Windows store namespace", "store-lib", 2),
         ("Windows store retention", "store-lib", 3),
+        ("Windows store evidence", "store-lib", 4),
     ] {
         let partition = format!(
             "          - name: {name}\n            suite: {suite}\n            shard: {shard}\n"
@@ -750,7 +763,7 @@ fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut V
             ));
         }
     }
-    for (key, expected_count) in [("suite:", 5), ("shard:", 5)] {
+    for (key, expected_count) in [("suite:", 6), ("shard:", 6)] {
         if block
             .lines()
             .map(str::trim)
@@ -985,6 +998,20 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
     }
 
     let commands = run_commands(block);
+    let compiler = commands
+        .iter()
+        .position(|command| command == "x86_64-linux-musl-gcc --version");
+    let build = commands
+        .iter()
+        .position(|command| command == RELEASE_BUILD_RUN);
+    if block.matches(LINUX_MUSL_C_SETUP).count() != 1
+        || !matches!((compiler, build), (Some(compiler), Some(build)) if compiler < build)
+    {
+        violations.push(
+            "release job must prepare the reviewed Linux musl C compiler before building"
+                .to_owned(),
+        );
+    }
     for (command, label) in [
         (RELEASE_BUILD_RUN, "locked release build"),
         (RELEASE_STAGE_RUN, "package staging"),
@@ -1207,6 +1234,36 @@ mod tests {
     }
 
     #[test]
+    fn release_musl_compiler_setup_is_required_before_build()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?;
+        for changed in [
+            source.replacen(LINUX_MUSL_C_SETUP, "", 1),
+            source.replacen("--yes musl-tools", "--yes gcc", 1),
+            source.replacen("x86_64-linux-musl-gcc --version", "gcc --version", 1),
+            source.replacen(
+                LINUX_MUSL_C_SETUP,
+                &LINUX_MUSL_C_SETUP.replace("shell: bash", "shell: pwsh"),
+                1,
+            ),
+            source.replacen(LINUX_MUSL_C_SETUP, "", 1).replacen(
+                "      - name: Probe packaged binary without runtime build tools",
+                &format!("{LINUX_MUSL_C_SETUP}\n      - name: Probe packaged binary without runtime build tools"),
+                1,
+            ),
+        ] {
+            assert_ne!(source, changed);
+            assert!(
+                violations(&changed)
+                    .iter()
+                    .any(|violation| violation.contains("Linux musl C compiler")),
+                "missing, changed, or late musl compiler setup was accepted",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn release_package_benchmark_is_required_after_probes() -> Result<(), Box<dyn std::error::Error>>
     {
         let source = workflow()?.replace(RELEASE_BENCHMARK_RUN, RELEASE_SKILL_PROBE_RUN);
@@ -1391,6 +1448,20 @@ mod tests {
                     "            shard: 3\n"
                 ),
                 "",
+                1,
+            ),
+            source.replacen(
+                concat!(
+                    "          - name: Windows store evidence\n",
+                    "            suite: store-lib\n",
+                    "            shard: 4\n"
+                ),
+                "",
+                1,
+            ),
+            source.replacen(
+                "--suite store-lib --index ${{ matrix.shard }} --count 5",
+                "--suite store-lib --index ${{ matrix.shard }} --count 4",
                 1,
             ),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
