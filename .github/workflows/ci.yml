@@ -154,6 +154,12 @@ jobs:
           PINNED_PYTHON: ${{ steps.python.outputs.python-path }}
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/test_source_provenance.py'
 
+      - name: Test benchmark process observer
+        shell: pwsh
+        env:
+          PINNED_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/benchmark/test_measure_process.py'
+
   dependency-policy:
     name: Dependency policy
     needs: policy
@@ -626,11 +632,13 @@ jobs:
         include:
           - os: ubuntu-24.04
             package_target: linux-x64
+            benchmark_environment: linux-release
             build_arguments: --target x86_64-unknown-linux-musl
             binary_path: x86_64-unknown-linux-musl/release/lumin
             fixture_binary_path: debug/lumin
           - os: windows-2022
             package_target: windows-x64
+            benchmark_environment: windows-ntfs
             build_arguments: ""
             binary_path: release/lumin.exe
             fixture_binary_path: debug/lumin.exe
@@ -702,6 +710,24 @@ jobs:
           LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}
           LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check skills'
+
+      - name: Benchmark packaged binary
+        shell: pwsh
+        env:
+          LUMIN_BENCHMARK_ENVIRONMENT: ${{ matrix.benchmark_environment }}
+          LUMIN_BENCHMARK_REPORT: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json
+          LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- benchmark foundation'
+
+      - name: Retain benchmark report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lumin-foundation-benchmark-${{ matrix.package_target }}
+          path: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
 
   required:
     name: Required

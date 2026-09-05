@@ -12,6 +12,21 @@ mod physical_alias;
 mod platform;
 mod skills;
 
+pub(crate) struct HostPackageArtifact {
+    pub(crate) root: PathBuf,
+    pub(crate) binary: PathBuf,
+    pub(crate) build_id: String,
+}
+
+pub(crate) fn load_host_package() -> Result<HostPackageArtifact, String> {
+    let artifact = artifact::load_for_host()?;
+    Ok(HostPackageArtifact {
+        root: artifact.root,
+        binary: artifact.binary,
+        build_id: artifact.build_id,
+    })
+}
+
 const BINARY_ENVIRONMENT: &str = "LUMIN_PACKAGE_BINARY";
 const FIXTURE_BINARY_ENVIRONMENT: &str = "LUMIN_PACKAGE_FIXTURE_BINARY";
 const PACKAGE_ROOT_ENVIRONMENT: &str = "LUMIN_PACKAGE_ROOT";

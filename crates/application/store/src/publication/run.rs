@@ -2,7 +2,6 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lumin_evidence::RunEvidence;
 use lumin_model::{AttemptStatus, RunId, digest_hex};
 
 use super::{AttemptEnvelope, files, latest, liveness, run_id};
@@ -11,24 +10,24 @@ use crate::namespace::{
     records::ManagedStateParentKind,
 };
 use crate::{
-    PublishedRun, RepositoryStore, RunCatalogRecord, StoreError, insert_catalog_record, io_error,
-    read_evidence_store, unix_millis, write_evidence_store,
+    PreparedRunEvidence, PublishedRun, RepositoryStore, RunCatalogRecord, StoreError,
+    insert_catalog_record, io_error, read_evidence_store, read_evidence_store_row, unix_millis,
+    write_evidence_store,
 };
 
 pub(super) fn publish(
     store: &RepositoryStore,
     session: &mut liveness::AttemptSession<'_>,
-    evidence: &RunEvidence,
-    final_validation: impl FnOnce(
+    preflight: impl FnOnce(
         &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
-    ) -> Result<(), StoreError>,
+    ) -> Result<PreparedRunEvidence, StoreError>,
 ) -> Result<PublishedRun, StoreError> {
     if !session.belongs_to(store) {
         return Err(StoreError::Integrity(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
-    let (envelope, record) = prepare_publication(store, session, evidence, final_validation)?;
+    let (envelope, record) = prepare_publication(store, session, preflight)?;
     #[cfg(feature = "publication-test-crash")]
     super::barrier::wait_prepared(session.attempt_id())?;
 
@@ -38,10 +37,9 @@ pub(super) fn publish(
 fn prepare_publication(
     store: &RepositoryStore,
     session: &liveness::AttemptSession<'_>,
-    evidence: &RunEvidence,
-    final_validation: impl FnOnce(
+    preflight: impl FnOnce(
         &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
-    ) -> Result<(), StoreError>,
+    ) -> Result<PreparedRunEvidence, StoreError>,
 ) -> Result<(AttemptEnvelope, RunCatalogRecord), StoreError> {
     store.with_shared_lock(|guard| {
         session
@@ -51,10 +49,10 @@ fn prepare_publication(
             .map_err(|error| publication_error("read running attempt", error))?;
         session.require_running(&envelope)?;
         let reserved_state_identities = guard.reserved_state_identities()?;
-        final_validation(&reserved_state_identities)
+        let evidence = preflight(&reserved_state_identities)
             .map_err(|error| publication_error("validate run publication inputs", error))?;
 
-        let record = publish_directory(store, guard, &envelope, evidence, session.generation())
+        let record = publish_directory(store, guard, &envelope, &evidence, session.generation())
             .map_err(|error| publication_error("publish run directory", error))?;
         hit_after_run_rename();
 
@@ -163,7 +161,7 @@ fn revalidate_publication_candidate(
             expected_envelope.attempt_id.as_str()
         )));
     }
-    let record = validate_published(guard, &envelope)
+    let record = validate_published_identity(guard, &envelope)
         .map_err(|error| publication_error("revalidate published run", error))?;
     if !same_record(&record, expected_record) {
         return Err(StoreError::Integrity(format!(
@@ -204,7 +202,7 @@ fn publish_directory(
     store: &RepositoryStore,
     guard: &NamespaceGuard,
     envelope: &AttemptEnvelope,
-    evidence: &RunEvidence,
+    evidence: &PreparedRunEvidence,
     generation: crate::StoreGeneration,
 ) -> Result<RunCatalogRecord, StoreError> {
     let run_id = run_id(envelope.sequence);
@@ -234,8 +232,6 @@ fn publish_directory(
     files::require_parent_volume(&staging_write_entry, parent, "run staging directory")?;
     let record = write_staging(&staging, &staging_write_entry, envelope, &run_id, evidence)
         .map_err(|error| publication_error("write staging payload", error))?;
-    validate_directory(&staging, &staging_write_entry, &record)
-        .map_err(|error| publication_error("validate staging payload", error))?;
     let staging_entry = HeldEntry::open(
         &staging,
         EntryKind::Directory,
@@ -253,7 +249,7 @@ fn publish_directory(
 
     guard
         .mutate_for_generation(generation, || {
-            validate_directory(&staging, &staging_entry, &record)
+            validate_written_directory(&staging, &staging_entry, &record, evidence.row())
                 .map_err(|error| publication_error("revalidate staging payload", error))?;
             guard.validate_bound_entries()?;
             staging_entry.validate_path(
@@ -284,7 +280,7 @@ fn publish_directory(
             )
         })
         .map_err(|error| publication_error("rename staging directory", error))?;
-    validate_directory(&published, &staging_entry, &record)
+    revalidate_directory_identity(&published, &staging_entry, &record)
         .map_err(|error| publication_error("validate published run", error))?;
     Ok(record)
 }
@@ -294,7 +290,7 @@ fn write_staging(
     staging_entry: &HeldEntry,
     envelope: &AttemptEnvelope,
     run_id: &RunId,
-    evidence: &RunEvidence,
+    evidence: &PreparedRunEvidence,
 ) -> Result<RunCatalogRecord, StoreError> {
     let evidence_path = staging.join("evidence.store");
     write_evidence_store(&evidence_path, evidence)
@@ -339,6 +335,21 @@ pub(super) fn validate_published(
     guard: &NamespaceGuard,
     envelope: &AttemptEnvelope,
 ) -> Result<RunCatalogRecord, StoreError> {
+    validate_published_with(guard, envelope, validate_directory)
+}
+
+fn validate_published_identity(
+    guard: &NamespaceGuard,
+    envelope: &AttemptEnvelope,
+) -> Result<RunCatalogRecord, StoreError> {
+    validate_published_with(guard, envelope, revalidate_directory_identity)
+}
+
+fn validate_published_with(
+    guard: &NamespaceGuard,
+    envelope: &AttemptEnvelope,
+    validate: impl FnOnce(&Path, &HeldEntry, &RunCatalogRecord) -> Result<(), StoreError>,
+) -> Result<RunCatalogRecord, StoreError> {
     let run_id = envelope.run_id.as_ref().ok_or_else(|| {
         StoreError::Integrity(format!(
             "completed attempt omitted its run ID: {}",
@@ -364,7 +375,7 @@ pub(super) fn validate_published(
             envelope.attempt_id.as_str()
         )));
     }
-    validate_directory(&path, &directory, &record)?;
+    validate(&path, &directory, &record)?;
     Ok(record)
 }
 
@@ -383,15 +394,99 @@ pub(crate) fn validate_directory(
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks_and_evidence(
+    validate_directory_with_hooks_and_evidence_bytes(
         directory_path,
         directory,
         expected,
         || Ok(()),
         || Ok(()),
         || Ok(()),
-        |_| Ok(()),
+        |bytes| {
+            read_evidence_store(bytes)?;
+            Ok(())
+        },
     )
+}
+
+fn validate_written_directory(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    expected_evidence_row: &[u8],
+) -> Result<(), StoreError> {
+    validate_directory_with_hooks_and_evidence_bytes(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        || Ok(()),
+        || Ok(()),
+        |bytes| {
+            let observed = read_evidence_store_row(bytes)?;
+            if observed != expected_evidence_row {
+                return Err(StoreError::Integrity(format!(
+                    "evidence store row changed during publication: {}",
+                    expected.run_id.as_str()
+                )));
+            }
+            Ok(())
+        },
+    )
+}
+
+fn revalidate_directory_identity(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    // This fast path is private to one live publication after `validate_directory`
+    // decoded and authenticated the exact envelope digest. Crash recovery and every
+    // independently opened run continue through the complete validator above.
+    validate_directory_inventory(directory, expected)?;
+    let observed: RunCatalogRecord =
+        files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
+    require_same_run_envelope(&observed, expected)?;
+
+    let evidence_path = directory_path.join("evidence.store");
+    let evidence = HeldEntry::open(
+        &evidence_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "run evidence store",
+    )?;
+    files::require_parent_volume(&evidence, directory, "run evidence store")?;
+    evidence.validate_path(
+        &evidence_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "run evidence store",
+    )?;
+    directory.validate_path(
+        directory_path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run directory",
+    )?;
+    validate_directory_inventory(directory, expected)?;
+    evidence.validate_path(
+        &evidence_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "run evidence store",
+    )?;
+    validate_evidence_store_identity(&evidence, expected)?;
+    directory.validate_path(
+        directory_path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run directory",
+    )?;
+    validate_directory_inventory(directory, expected)
 }
 
 pub(crate) fn validate_directory_for_migration(
@@ -399,15 +494,16 @@ pub(crate) fn validate_directory_for_migration(
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks_and_evidence(
+    validate_directory_with_hooks_and_evidence_bytes(
         directory_path,
         directory,
         expected,
         || Ok(()),
         || Ok(()),
         || Ok(()),
-        |evidence| {
-            lumin_evidence::validate_migration_run_evidence(evidence).map_err(|error| {
+        |bytes| {
+            let evidence = read_evidence_store(bytes)?;
+            lumin_evidence::validate_migration_run_evidence(&evidence).map_err(|error| {
                 StoreError::Integrity(format!(
                     "legacy run evidence cannot be authenticated for migration: {error}"
                 ))
@@ -423,14 +519,17 @@ pub(crate) fn validate_directory_with_evidence_read_hook(
     expected: &RunCatalogRecord,
     after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks_and_evidence(
+    validate_directory_with_hooks_and_evidence_bytes(
         directory_path,
         directory,
         expected,
         after_evidence_read,
         || Ok(()),
         || Ok(()),
-        |_| Ok(()),
+        |bytes| {
+            read_evidence_store(bytes)?;
+            Ok(())
+        },
     )
 }
 
@@ -442,40 +541,33 @@ pub(crate) fn validate_directory_with_inventory_hooks(
     before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
     after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks_and_evidence(
+    validate_directory_with_hooks_and_evidence_bytes(
         directory_path,
         directory,
         expected,
         || Ok(()),
         before_final_inventory,
         after_final_inventory,
-        |_| Ok(()),
+        |bytes| {
+            read_evidence_store(bytes)?;
+            Ok(())
+        },
     )
 }
 
-fn validate_directory_with_hooks_and_evidence(
+fn validate_directory_with_hooks_and_evidence_bytes(
     directory_path: &Path,
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
     after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
     before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
     after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
-    validate_evidence: impl FnOnce(&RunEvidence) -> Result<(), StoreError>,
+    validate_evidence: impl FnOnce(&[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     validate_directory_inventory(directory, expected)?;
     let observed: RunCatalogRecord =
         files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
-    if observed.attempt_id != expected.attempt_id
-        || observed.run_id != expected.run_id
-        || observed.sequence != expected.sequence
-        || observed.evidence_store_sha256 != expected.evidence_store_sha256
-        || observed.evidence_store_size != expected.evidence_store_size
-    {
-        return Err(StoreError::Integrity(format!(
-            "run envelope changed during publication: {}",
-            expected.run_id.as_str()
-        )));
-    }
+    require_same_run_envelope(&observed, expected)?;
     let evidence_path = directory_path.join("evidence.store");
     let evidence = HeldEntry::open(
         &evidence_path,
@@ -487,8 +579,7 @@ fn validate_directory_with_hooks_and_evidence(
     files::require_parent_volume(&evidence, directory, "run evidence store")?;
     let bytes = validate_evidence_store_identity(&evidence, expected)?;
     after_evidence_read()?;
-    let run_evidence = read_evidence_store(&bytes)?;
-    validate_evidence(&run_evidence)?;
+    validate_evidence(&bytes)?;
     evidence.validate_path(
         &evidence_path,
         EntryKind::RegularFile,
@@ -522,6 +613,24 @@ fn validate_directory_with_hooks_and_evidence(
         "run directory",
     )?;
     validate_directory_inventory(directory, expected)
+}
+
+fn require_same_run_envelope(
+    observed: &RunCatalogRecord,
+    expected: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    if observed.attempt_id == expected.attempt_id
+        && observed.run_id == expected.run_id
+        && observed.sequence == expected.sequence
+        && observed.evidence_store_sha256 == expected.evidence_store_sha256
+        && observed.evidence_store_size == expected.evidence_store_size
+    {
+        return Ok(());
+    }
+    Err(StoreError::Integrity(format!(
+        "run envelope changed during publication: {}",
+        expected.run_id.as_str()
+    )))
 }
 
 fn validate_evidence_store_identity(

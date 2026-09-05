@@ -62,6 +62,33 @@ use thiserror::Error;
 use extraction::reduce_file_facts;
 use extraction::{ExtractionOutput, extract_facts};
 
+const WORKER_STACK_BYTES: usize = 4_194_304;
+
+fn with_worker_pool<T: Send>(
+    jobs: usize,
+    work: impl FnOnce() -> T + Send,
+) -> Result<T, EngineError> {
+    if jobs == 0 {
+        return Err(EngineError::InvalidWorkerCount(0));
+    }
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .stack_size(WORKER_STACK_BYTES)
+        .thread_name(|index| format!("lumin-worker-{index}"))
+        .build()
+        .map_err(|error| EngineError::Scheduler(error.to_string()))?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pool.install(work))).map_err(
+        |payload| {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "worker panicked without a string payload".to_owned());
+            EngineError::Scheduler(detail)
+        },
+    )
+}
+
 pub fn lower_native_repo_path(
     value: &OsStr,
 ) -> Result<lumin_model::RepoPath, lumin_model::RepoPathError> {
@@ -212,6 +239,10 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
+    with_worker_pool(request.jobs, || audit_in_current_pool(request))?
+}
+
+fn audit_in_current_pool(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     lumin_inventory::validate_caller_paths_lexically(&request.entries)?;
     let admission = repository_admission(&request.root)?;
     lumin_inventory::validate_caller_entries(&admission.canonical_root, &request.entries)?;
@@ -232,11 +263,10 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         entries: request.entries.clone(),
         dependency_intents: Vec::new(),
     };
-    let capture = match capture_admitted_repository(
+    let capture = match capture_admitted_repository_in_current_pool(
         &context.root,
         context.repository_root.clone(),
         &inventory_request,
-        request.jobs,
         request.resolution_profile,
         &reserved_state_lookup,
     ) {
@@ -346,7 +376,6 @@ struct RepositoryAnalysisSession {
     reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
     extraction: Option<ExtractionOutput>,
     js_parse_product_count: usize,
-    jobs: usize,
     scan_invocation: ScanInvocationTier,
 }
 
@@ -382,12 +411,29 @@ fn capture_admitted_repository(
     resolution_profile: Option<ResolutionProfile>,
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<RepositoryCapture, EngineError> {
+    with_worker_pool(jobs, || {
+        capture_admitted_repository_in_current_pool(
+            root,
+            repository_root,
+            request,
+            resolution_profile,
+            reserved_state_lookup,
+        )
+    })?
+}
+
+fn capture_admitted_repository_in_current_pool(
+    root: &Path,
+    repository_root: RepositoryRootIdentity,
+    request: &InventoryRequest,
+    resolution_profile: Option<ResolutionProfile>,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+) -> Result<RepositoryCapture, EngineError> {
     let tier = build_scan_invocation_tier(request, resolution_profile);
     let mut session = RepositoryAnalysisSession::start(
         root,
         repository_root,
         request,
-        jobs,
         tier,
         reserved_state_lookup,
     )?;
@@ -456,11 +502,10 @@ impl RepositoryAnalysisSession {
         root: &Path,
         repository_root: RepositoryRootIdentity,
         request: &InventoryRequest,
-        jobs: usize,
         scan_invocation: ScanInvocationTier,
         reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
     ) -> Result<Self, EngineError> {
-        let inventory = lumin_inventory::begin_scan_with_reserved_state_lookup(
+        let inventory = lumin_inventory::begin_scan_in_current_pool_with_reserved_state_lookup(
             root,
             request,
             reserved_state_lookup,
@@ -469,7 +514,6 @@ impl RepositoryAnalysisSession {
         Self::start_with_inventory(
             repository_root,
             inventory,
-            jobs,
             scan_invocation,
             reserved_state_lookup.clone(),
         )
@@ -478,20 +522,15 @@ impl RepositoryAnalysisSession {
     fn start_with_inventory(
         repository_root: RepositoryRootIdentity,
         inventory: InventorySnapshot,
-        jobs: usize,
         scan_invocation: ScanInvocationTier,
         reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
     ) -> Result<Self, EngineError> {
-        if jobs == 0 {
-            return Err(EngineError::InvalidWorkerCount(0));
-        }
         Ok(Self {
             repository_root,
             inventory,
             reserved_state_lookup,
             extraction: None,
             js_parse_product_count: 0,
-            jobs,
             scan_invocation,
         })
     }
@@ -525,7 +564,6 @@ impl RepositoryAnalysisSession {
                 &self.inventory.sources,
                 &self.inventory.config,
                 &profile_selection.profiles,
-                self.jobs,
             )?;
             self.js_parse_product_count = self
                 .js_parse_product_count
@@ -740,7 +778,7 @@ impl RepositoryAnalysisSession {
         // Build entry selection records from ALL inventory entries (available + unavailable)
         let entry_selections = self.entry_selection_records();
 
-        Ok(RepositoryCapture {
+        let capture = RepositoryCapture {
             snapshot: seal_analysis_snapshot(
                 semantic_input_records(&self.inventory),
                 evidence,
@@ -748,7 +786,8 @@ impl RepositoryAnalysisSession {
                 entry_selections,
             ),
             inferred_write_paths,
-        })
+        };
+        Ok(capture)
     }
 }
 

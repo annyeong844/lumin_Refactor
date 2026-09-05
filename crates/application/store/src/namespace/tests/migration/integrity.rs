@@ -29,8 +29,9 @@ use crate::retention::{
     records::StoredRetentionPlan,
 };
 use crate::{
-    EVIDENCE, GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart,
-    RUN_CATALOG, RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
+    EVIDENCE, EVIDENCE_CHUNK_BYTES, EVIDENCE_CHUNK_PREFIX, GateBaselineDraft,
+    ObservationFinalization, PreWriteFinish, PreWriteStart, RUN_CATALOG, RepositoryStore,
+    RunCatalogRecord, SEQUENCES, StoreError,
 };
 
 use super::super::open_store as open_ordinary_store;
@@ -485,17 +486,16 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                     let foreign = TableDefinition::<&str, &[u8]>::new("foreign-evidence");
                     let mut table = write.open_table(foreign)?;
                     table.insert("opaque", b"opaque".as_slice())?;
-                } else {
+                } else if mutation == "extra-row" {
                     let mut table = write.open_table(EVIDENCE)?;
-                    match mutation {
-                        "row" => {
-                            table.insert("run", b"{".as_slice())?;
-                        }
+                    table.insert("opaque", b"opaque".as_slice())?;
+                } else {
+                    let replacement = match mutation {
+                        "row" => b"{".to_vec(),
                         "schema" => {
                             let mut changed = evidence();
                             changed.schema_version = "lumin-evidence.foreign".to_owned();
-                            let bytes = serde_json::to_vec(&changed)?;
-                            table.insert("run", bytes.as_slice())?;
+                            serde_json::to_vec(&changed)?
                         }
                         "duplicate-capability" => {
                             let mut changed = evidence();
@@ -506,14 +506,12 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                                     .ok_or("run evidence omitted its capability")?
                                     .clone(),
                             );
-                            let bytes = serde_json::to_vec(&changed)?;
-                            table.insert("run", bytes.as_slice())?;
+                            serde_json::to_vec(&changed)?
                         }
                         "missing-capability" => {
                             let mut changed = evidence();
                             changed.capabilities.pop();
-                            let bytes = serde_json::to_vec(&changed)?;
-                            table.insert("run", bytes.as_slice())?;
+                            serde_json::to_vec(&changed)?
                         }
                         "opaque-capability" => {
                             let mut changed = evidence();
@@ -521,17 +519,12 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                                 capability_id: "opaque.v1".to_owned(),
                                 state: CapabilityState::Complete,
                             });
-                            let bytes = serde_json::to_vec(&changed)?;
-                            table.insert("run", bytes.as_slice())?;
+                            serde_json::to_vec(&changed)?
                         }
                         "metrics" => {
                             let mut changed = evidence();
                             changed.metrics.logical_source_count = 1;
-                            let bytes = serde_json::to_vec(&changed)?;
-                            table.insert("run", bytes.as_slice())?;
-                        }
-                        "extra-row" => {
-                            table.insert("opaque", b"opaque".as_slice())?;
+                            serde_json::to_vec(&changed)?
                         }
                         "opaque-top-level" | "opaque-nested" => {
                             let mut changed = serde_json::to_value(evidence())?;
@@ -547,11 +540,11 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                             };
                             target
                                 .insert("opaqueControl".to_owned(), serde_json::Value::Bool(true));
-                            let bytes = serde_json::to_vec(&changed)?;
-                            table.insert("run", bytes.as_slice())?;
+                            serde_json::to_vec(&changed)?
                         }
                         _ => unreachable!(),
-                    }
+                    };
+                    replace_evidence_payload(&write, &replacement)?;
                 }
                 write.commit()?;
                 drop(database);
@@ -615,19 +608,15 @@ fn run_evidence_decode_stays_bound_to_the_hashed_held_bytes()
 
     let database = Database::open(&evidence_path)?;
     let write = database.begin_write()?;
-    {
-        let mut table = write.open_table(EVIDENCE)?;
-        let mut changed = evidence();
-        changed.capabilities.push(
-            changed
-                .capabilities
-                .first()
-                .ok_or("run evidence omitted its capability")?
-                .clone(),
-        );
-        let bytes = serde_json::to_vec(&changed)?;
-        table.insert("run", bytes.as_slice())?;
-    }
+    let mut changed = evidence();
+    changed.capabilities.push(
+        changed
+            .capabilities
+            .first()
+            .ok_or("run evidence omitted its capability")?
+            .clone(),
+    );
+    replace_evidence_payload(&write, &serde_json::to_vec(&changed)?)?;
     write.commit()?;
     drop(database);
     rewrite_run_evidence_identity(root.path(), &published.run_id)?;
@@ -656,6 +645,25 @@ fn run_evidence_decode_stays_bound_to_the_hashed_held_bytes()
         Err(StoreError::Integrity(message))
             if message.contains("duplicate identity in capabilities")
     ));
+    Ok(())
+}
+
+fn replace_evidence_payload(
+    write: &WriteTransaction,
+    bytes: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut table = write.open_table(EVIDENCE)?;
+    let keys = table
+        .iter()?
+        .map(|row| row.map(|(key, _)| key.value().to_owned()))
+        .collect::<Result<Vec<_>, redb::StorageError>>()?;
+    for key in keys {
+        table.remove(key.as_str())?;
+    }
+    for (index, chunk) in bytes.chunks(EVIDENCE_CHUNK_BYTES).enumerate() {
+        let key = format!("{EVIDENCE_CHUNK_PREFIX}{index:016x}");
+        table.insert(key.as_str(), chunk)?;
+    }
     Ok(())
 }
 

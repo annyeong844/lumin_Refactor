@@ -2,6 +2,10 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(feature = "lifecycle-test-fault")]
 mod delivery_barrier;
 

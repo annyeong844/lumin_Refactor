@@ -112,6 +112,24 @@
         },
         {
           "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": "cfg(all(target_os = \"linux\", target_env = \"musl\"))",
+          "alias": "mimalloc",
+          "package": "mimalloc",
+          "requirement": "=0.1.52",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "mimalloc",
+            "version": "0.1.52",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
           "kind": "development",
           "target": null,
           "alias": "serde_json",
@@ -594,6 +612,24 @@
           "resolution": {
             "kind": "workspace",
             "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "rayon",
+          "package": "rayon",
+          "requirement": "=1.11.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "rayon",
+            "version": "1.11.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         },
         {
@@ -1544,6 +1580,16 @@
       "requirement": "=0.4.26",
       "defaultFeatures": true,
       "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "mimalloc",
+      "package": "mimalloc",
+      "requirement": "=0.1.52",
+      "defaultFeatures": true,
+      "features": [
+        "v2"
+      ],
       "sourceKind": "crates-io"
     },
     {

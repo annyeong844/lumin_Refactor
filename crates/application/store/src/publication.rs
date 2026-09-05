@@ -73,7 +73,20 @@ impl RepositoryStore {
             &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
         ) -> Result<(), StoreError>,
     ) -> Result<crate::PublishedRun, StoreError> {
-        run::publish(self, attempt, evidence, final_validation)
+        run::publish(self, attempt, |reserved_identities| {
+            final_validation(reserved_identities)?;
+            crate::prepare_run_evidence(evidence)
+        })
+    }
+
+    pub fn publish_run_with_preflight(
+        &self,
+        attempt: &mut AttemptSession<'_>,
+        preflight: impl FnOnce(
+            &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+        ) -> Result<crate::PreparedRunEvidence, StoreError>,
+    ) -> Result<crate::PublishedRun, StoreError> {
+        run::publish(self, attempt, preflight)
     }
 
     pub fn latest_snapshot(&self) -> Result<LatestRunSnapshot, StoreError> {

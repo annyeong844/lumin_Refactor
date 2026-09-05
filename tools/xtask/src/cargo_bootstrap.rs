@@ -11,6 +11,8 @@ const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 const CHECKOUT: &str = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
 const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
+const UPLOAD_ARTIFACT: &str =
+    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1";
 const INSTALL_TOOLS: &str =
     "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4";
 const GUARD_PREFIX: &str = concat!(
@@ -20,6 +22,10 @@ const GUARD_PREFIX: &str = concat!(
 const TEST_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
     "tools/xtask/bootstrap/test_source_provenance.py"
+);
+const BENCHMARK_TEST_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/benchmark/test_measure_process.py"
 );
 const CI_POLICY_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
@@ -61,6 +67,10 @@ const RELEASE_PLATFORM_PROBE_RUN: &str = concat!(
 const RELEASE_SKILL_PROBE_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- package-check skills"
+);
+const RELEASE_BENCHMARK_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- benchmark foundation"
 );
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
@@ -237,7 +247,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
 }
 
 fn validate_actions(source: &str, violations: &mut Vec<String>) {
-    let allowed = [CHECKOUT, SETUP_PYTHON, INSTALL_TOOLS];
+    let allowed = [CHECKOUT, SETUP_PYTHON, UPLOAD_ARTIFACT, INSTALL_TOOLS];
     for line in source.lines() {
         let Some(action) = line.trim().strip_prefix("uses: ") else {
             continue;
@@ -308,6 +318,11 @@ fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
         if line.contains("test_source_provenance.py") && line != TEST_COMMAND {
             violations.push(format!(
                 "bootstrap tests in {name} must use the pinned isolated Python command"
+            ));
+        }
+        if line.contains("test_measure_process.py") && line != BENCHMARK_TEST_COMMAND {
+            violations.push(format!(
+                "benchmark observer tests in {name} must use the pinned isolated Python command"
             ));
         }
         if line.contains("test_ci_policy.py") && line != CI_POLICY_TEST_COMMAND {
@@ -411,6 +426,7 @@ fn is_reviewed_run_command(line: &str) -> bool {
         PRIVATE_TARGET,
         "& \"$env:PINNED_CARGO\" fmt --all --check",
         TEST_COMMAND,
+        BENCHMARK_TEST_COMMAND,
         DIRECT_AUDIT,
         DIRECT_DENY,
         STRUCTURAL_CHECK,
@@ -913,9 +929,11 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
     let lines = block.lines().map(str::trim).collect::<Vec<_>>();
     for required in [
         "package_target: linux-x64",
+        "benchmark_environment: linux-release",
         "build_arguments: --target x86_64-unknown-linux-musl",
         "binary_path: x86_64-unknown-linux-musl/release/lumin",
         "package_target: windows-x64",
+        "benchmark_environment: windows-ntfs",
         "binary_path: release/lumin.exe",
         "LUMIN_BUILD_REVISION: ${{ github.sha }}",
     ] {
@@ -934,7 +952,30 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
             "LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}",
             2,
         ),
-        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 3),
+        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 4),
+        (
+            "LUMIN_BENCHMARK_ENVIRONMENT: ${{ matrix.benchmark_environment }}",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_REPORT: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json",
+            1,
+        ),
+        (
+            "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+            1,
+        ),
+        (
+            "name: lumin-foundation-benchmark-${{ matrix.package_target }}",
+            1,
+        ),
+        (
+            "path: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json",
+            1,
+        ),
+        ("if-no-files-found: error", 1),
+        ("retention-days: 90", 1),
+        ("compression-level: 0", 1),
     ] {
         if lines.iter().filter(|line| **line == binding).count() != count {
             violations.push(format!(
@@ -949,6 +990,7 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
         (RELEASE_STAGE_RUN, "package staging"),
         (RELEASE_PLATFORM_PROBE_RUN, "platform package probe"),
         (RELEASE_SKILL_PROBE_RUN, "skill package probe"),
+        (RELEASE_BENCHMARK_RUN, "release benchmark"),
     ] {
         if commands
             .iter()
@@ -970,12 +1012,34 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
     let skills = commands
         .iter()
         .position(|command| command == RELEASE_SKILL_PROBE_RUN);
+    let benchmark = commands
+        .iter()
+        .position(|command| command == RELEASE_BENCHMARK_RUN);
     if !matches!(
-        (stage, platform, skills),
-        (Some(stage), Some(platform), Some(skills)) if stage < platform && platform < skills
+        (stage, platform, skills, benchmark),
+        (Some(stage), Some(platform), Some(skills), Some(benchmark))
+            if stage < platform && platform < skills && skills < benchmark
     ) {
         violations.push(
-            "release job must stage one package before its platform and skill probes".to_owned(),
+            "release job must stage one package before its platform, skill, and benchmark probes"
+                .to_owned(),
+        );
+    }
+    let benchmark_command = block.find(RELEASE_BENCHMARK_RUN);
+    let retained_report = block.find(&format!("uses: {UPLOAD_ARTIFACT}"));
+    if !matches!(
+        (benchmark_command, retained_report),
+        (Some(benchmark), Some(retained)) if benchmark < retained
+    ) || block
+        .lines()
+        .map(str::trim)
+        .filter(|line| *line == "if: ${{ always() }}")
+        .count()
+        != 1
+    {
+        violations.push(
+            "release benchmark report must be retained after measurement, including target failure"
+                .to_owned(),
         );
     }
 }
@@ -1062,6 +1126,15 @@ fn validate_bootstrap_test_job(jobs: &BTreeMap<String, String>, violations: &mut
     {
         violations.push("bootstrap test suite must run once in its own process job".to_owned());
     }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == BENCHMARK_TEST_COMMAND)
+        .count()
+        != 1
+    {
+        violations
+            .push("benchmark observer tests must run once in the bootstrap test job".to_owned());
+    }
 }
 
 fn validate_no_nested_dependency_admission(root: &Path, result: &mut CargoBootstrapResult) {
@@ -1129,6 +1202,52 @@ mod tests {
             violations(&source)
                 .iter()
                 .any(|violation| violation.contains("reviewed package staging"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_package_benchmark_is_required_after_probes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = workflow()?.replace(RELEASE_BENCHMARK_RUN, RELEASE_SKILL_PROBE_RUN);
+        let found = violations(&source);
+        assert!(
+            found.iter().any(|violation| {
+                violation.contains("release benchmark")
+                    || violation.contains("platform, skill, and benchmark probes")
+            }),
+            "{found:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_benchmark_report_retention_is_required() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace(
+            &format!("uses: {UPLOAD_ARTIFACT}"),
+            "uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        );
+        let found = violations(&source);
+        assert!(
+            found.iter().any(|violation| {
+                violation.contains("unpinned CI action")
+                    || violation.contains("benchmark report must be retained")
+            }),
+            "{found:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_benchmark_report_is_retained_on_target_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace("if: ${{ always() }}", "if: ${{ success() }}");
+        let found = violations(&source);
+        assert!(
+            found
+                .iter()
+                .any(|violation| violation.contains("including target failure")),
+            "{found:#?}"
         );
         Ok(())
     }
@@ -1356,7 +1475,11 @@ mod tests {
                 "    name: Required\n    continue-on-error: true\n",
                 1,
             ),
-            source.replacen("    if: ${{ always() }}\n", "    if: ${{ false }}\n", 1),
+            source.replacen(
+                "  required:\n    name: Required\n    if: ${{ always() }}\n",
+                "  required:\n    name: Required\n    if: ${{ false }}\n",
+                1,
+            ),
         ] {
             assert!(
                 violations(&changed)

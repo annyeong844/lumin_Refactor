@@ -1030,6 +1030,8 @@ def _target_applies(target: str | None, lane: str) -> bool:
         return True
     if target == "cfg(windows)":
         return lane == "x86_64-pc-windows-msvc"
+    if target == 'cfg(all(target_os = "linux", target_env = "musl"))':
+        return lane == "x86_64-unknown-linux-musl"
     raise ProvenanceError(f"unsupported target predicate in frozen policy: {target}")
 
 

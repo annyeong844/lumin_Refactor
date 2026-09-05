@@ -482,6 +482,22 @@ class DependencySurfaceTests(unittest.TestCase):
                     changed, metadata, repository, "x86_64-unknown-linux-gnu"
                 )
 
+    def test_target_predicates_are_an_exact_frozen_set(self) -> None:
+        musl_allocator = 'cfg(all(target_os = "linux", target_env = "musl"))'
+        self.assertTrue(
+            PROVENANCE._target_applies(musl_allocator, "x86_64-unknown-linux-musl")
+        )
+        self.assertFalse(
+            PROVENANCE._target_applies(musl_allocator, "x86_64-unknown-linux-gnu")
+        )
+        self.assertFalse(
+            PROVENANCE._target_applies(musl_allocator, "x86_64-pc-windows-msvc")
+        )
+        with self.assertRaises(PROVENANCE.ProvenanceError):
+            PROVENANCE._target_applies(
+                'cfg(target_env = "musl")', "x86_64-unknown-linux-musl"
+            )
+
     def test_registry_manifest_must_be_loaded_from_the_active_cargo_home(self) -> None:
         with Fixture() as fixture:
             metadata = fixture.metadata()

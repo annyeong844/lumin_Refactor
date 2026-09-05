@@ -7,6 +7,7 @@ use lumin_inventory::{
 };
 use lumin_model::{ConfigAbsenceParent, PhysicalFileIdentity, RepoPath};
 use lumin_store::{AttemptSession, PublishedRun, RepositoryStore, StoreError};
+use rayon::prelude::*;
 
 pub(super) fn publish(
     store: &RepositoryStore,
@@ -15,13 +16,15 @@ pub(super) fn publish(
     reserved_state_lookup: &ReservedStateIdentityLookup,
     snapshot: &AnalysisSnapshot,
 ) -> Result<PublishedRun, StoreError> {
-    store.publish_run(attempt, &snapshot.evidence, |reserved_identities| {
+    let evidence = lumin_store::prepare_run_evidence(&snapshot.evidence)?;
+    store.publish_run_with_preflight(attempt, move |reserved_identities| {
         validate_snapshot(
             root,
             &snapshot.inputs,
             reserved_state_lookup,
             reserved_identities,
-        )
+        )?;
+        Ok(evidence)
     })
 }
 
@@ -32,13 +35,20 @@ fn validate_snapshot(
     reserved_identities: &BTreeSet<PhysicalFileIdentity>,
 ) -> Result<(), StoreError> {
     let final_lookup = reserved_state_lookup.for_final_validation(reserved_identities);
-    for input in inputs {
-        if let Some(sha256) = &input.physical_redirect_sha256 {
-            validate_redirect_path(root, &input.path, sha256, reserved_identities)?;
-        }
-        if input.state != SemanticInputState::PathRedirect {
-            validate_input(root, input, &final_lookup)?;
-        }
+    let validations = inputs
+        .par_iter()
+        .map(|input| {
+            if let Some(sha256) = &input.physical_redirect_sha256 {
+                validate_redirect_path(root, &input.path, sha256, reserved_identities)?;
+            }
+            if input.state != SemanticInputState::PathRedirect {
+                validate_input(root, input, &final_lookup)?;
+            }
+            Ok(())
+        })
+        .collect::<Vec<Result<(), StoreError>>>();
+    for validation in validations {
+        validation?;
     }
     Ok(())
 }

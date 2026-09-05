@@ -99,7 +99,7 @@ pub(super) fn finish_failed(
 }
 
 pub(super) fn recover(store: &RepositoryStore) -> Result<(), StoreError> {
-    store.with_exclusive_lock(|guard| {
+    store.with_admission_exclusive_lock(|guard| {
         latest::ensure(store, guard)?;
         recovery::recover_under_guard(store, guard)
     })

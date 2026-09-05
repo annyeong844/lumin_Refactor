@@ -26,6 +26,7 @@ use lumin_model::{
     SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, SourceSnapshot, digest_hex,
     validate_scan_pattern,
 };
+use rayon::prelude::*;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -41,8 +42,8 @@ pub use generated_config_policy::{
 pub use physical_path::{
     ConfigInputIdentity, WriteTargetError, WriteTargetKind, WriteTargetObservation,
     directory_physical_identity, inspect_write_target, observe_config_input_identity,
-    observe_physical_file_identity, physical_alias_write_closure, physical_file_identity,
-    rehash_existing_write_target, validate_captured_physical_path_redirect,
+    observe_physical_file_identity, physical_alias_write_closure, physical_alias_write_closures,
+    physical_file_identity, rehash_existing_write_target, validate_captured_physical_path_redirect,
 };
 pub use reserved_state::{
     ReservedStateIdentityLookup, is_reserved_state_path, validate_caller_entries,
@@ -201,6 +202,37 @@ struct FileObservationContext<'a> {
     reserved_state_lookup: &'a ReservedStateIdentityLookup,
 }
 
+struct FileCandidate {
+    native_path: PathBuf,
+    relative: PathBuf,
+    path: RepoPath,
+}
+
+struct SourceCandidate {
+    native_path: PathBuf,
+    relative: PathBuf,
+    path: RepoPath,
+    kind: SourceKind,
+}
+
+struct PreparedSource {
+    candidate: SourceCandidate,
+    opened: capture::OpenedSource,
+}
+
+enum SourcePreparation {
+    Ready(PreparedSource),
+    Unavailable(Limitation),
+}
+
+struct CapturedSourceGroup {
+    physical_identity: PhysicalFileIdentity,
+    payload: Option<Arc<[u8]>>,
+    sources: Vec<SourceSnapshot>,
+    observations: Vec<(RepoPath, capture::PhysicalFileObservation)>,
+    limitations: Vec<Limitation>,
+}
+
 pub struct PendingInventoryScan {
     canonical_root: PathBuf,
     snapshot: InventorySnapshot,
@@ -260,6 +292,25 @@ pub fn begin_scan_with_reserved_state_lookup(
     request: &InventoryRequest,
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<PendingInventoryScan, InventoryError> {
+    begin_scan_with_execution(root, request, reserved_state_lookup, false)
+}
+
+/// Runs file-worker capture through the engine-owned Rayon pool currently installed on this
+/// thread. Callers outside `lumin-engine` should use the serial admission surface above.
+pub fn begin_scan_in_current_pool_with_reserved_state_lookup(
+    root: &Path,
+    request: &InventoryRequest,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<PendingInventoryScan, InventoryError> {
+    begin_scan_with_execution(root, request, reserved_state_lookup, true)
+}
+
+fn begin_scan_with_execution(
+    root: &Path,
+    request: &InventoryRequest,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+    parallel_file_workers: bool,
+) -> Result<PendingInventoryScan, InventoryError> {
     validate_root(root)?;
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
@@ -304,7 +355,7 @@ pub fn begin_scan_with_reserved_state_lookup(
         reserved_state_lookup,
     };
 
-    let mut collected = collect_repository_files(&observation_context)?;
+    let mut collected = collect_repository_files(&observation_context, parallel_file_workers)?;
 
     if let Some(path) = config_path.clone() {
         collected.consulted_config_paths.push(path);
@@ -927,8 +978,10 @@ pub fn directory_contains_rust_path(
 
 fn collect_repository_files(
     context: &FileObservationContext<'_>,
+    parallel_file_workers: bool,
 ) -> Result<CollectedFiles, InventoryError> {
     let mut collected = CollectedFiles::default();
+    let mut candidates = Vec::new();
     let pruned_redirects = Arc::new(Mutex::new(Vec::new()));
     let captured_pruned_redirects = Arc::clone(&pruned_redirects);
     let mut builder = WalkBuilder::new(context.root);
@@ -1040,7 +1093,11 @@ fn collect_repository_files(
         if !is_file {
             continue;
         }
-        collected.observe_file(context, entry.path(), relative, path)?;
+        candidates.push(FileCandidate {
+            native_path: entry.path().to_owned(),
+            relative: relative.to_owned(),
+            path,
+        });
     }
     let mut pruned_redirects = pruned_redirects
         .lock()
@@ -1063,6 +1120,7 @@ fn collect_repository_files(
         })?;
         record_physical_path_redirect(context, &native_path, path, &mut collected);
     }
+    collected.observe_candidates(context, candidates, parallel_file_workers)?;
     Ok(collected)
 }
 
@@ -1085,7 +1143,218 @@ fn record_physical_path_redirect(
     collected.physical_path_redirects.insert(path, redirect);
 }
 
+fn prepare_source(
+    context: &FileObservationContext<'_>,
+    candidate: SourceCandidate,
+) -> Result<SourcePreparation, InventoryError> {
+    let logical_path = candidate.path.display_escaped();
+    let opened = match capture::OpenedSource::open(
+        context.canonical_root,
+        &candidate.native_path,
+        &logical_path,
+    ) {
+        Ok(opened) => opened,
+        Err(error) => {
+            return Ok(SourcePreparation::Unavailable(
+                Limitation::SourcePayloadUnavailable {
+                    path: logical_path,
+                    detail: error.to_string(),
+                },
+            ));
+        }
+    };
+    Ok(SourcePreparation::Ready(PreparedSource {
+        candidate,
+        opened,
+    }))
+}
+
+fn capture_source_group(
+    context: &FileObservationContext<'_>,
+    mut group: Vec<PreparedSource>,
+) -> Result<CapturedSourceGroup, InventoryError> {
+    group.sort_by(|left, right| left.candidate.path.cmp(&right.candidate.path));
+    let physical_identity = group
+        .first()
+        .ok_or_else(|| InventoryError::RootIo("empty physical source group".to_owned()))?
+        .opened
+        .observation()
+        .identity
+        .clone();
+    let mut payload = None;
+    let mut sources = Vec::new();
+    let mut observations = Vec::new();
+    let mut limitations = Vec::new();
+    for mut prepared in group {
+        let logical_path = prepared.candidate.path.display_escaped();
+        if payload.is_none() {
+            match prepared.opened.read_payload(&logical_path) {
+                Ok(bytes) => payload = Some(bytes),
+                Err(error) => {
+                    limitations.push(Limitation::SourcePayloadUnavailable {
+                        path: logical_path,
+                        detail: error.to_string(),
+                    });
+                    continue;
+                }
+            }
+        }
+        let bytes = Arc::clone(
+            payload
+                .as_ref()
+                .ok_or_else(|| InventoryError::RootIo("source payload disappeared".to_owned()))?,
+        );
+        let current = match prepared.opened.validate_path(
+            context.canonical_root,
+            &prepared.candidate.native_path,
+            &logical_path,
+        ) {
+            Ok(current) => current,
+            Err(error) => {
+                limitations.push(Limitation::SourcePayloadUnavailable {
+                    path: logical_path,
+                    detail: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let roles = classify_roles(
+            &prepared.candidate.path,
+            &prepared.candidate.relative,
+            prepared.candidate.kind,
+            &bytes,
+            context.patterns,
+        )?;
+        observations.push((prepared.candidate.path.clone(), current));
+        sources.push(SourceSnapshot::new(
+            prepared.candidate.path,
+            prepared.candidate.kind,
+            roles,
+            physical_identity.clone(),
+            bytes,
+        ));
+    }
+    Ok(CapturedSourceGroup {
+        physical_identity,
+        payload,
+        sources,
+        observations,
+        limitations,
+    })
+}
+
 impl CollectedFiles {
+    fn observe_candidates(
+        &mut self,
+        context: &FileObservationContext<'_>,
+        mut candidates: Vec<FileCandidate>,
+        parallel_file_workers: bool,
+    ) -> Result<(), InventoryError> {
+        candidates.sort_by(|left, right| left.path.cmp(&right.path));
+        let mut source_candidates = Vec::new();
+        for candidate in candidates {
+            if config_syntax(&candidate.relative).is_some() {
+                self.observe_file(
+                    context,
+                    &candidate.native_path,
+                    &candidate.relative,
+                    candidate.path,
+                )?;
+                continue;
+            }
+            if !context.patterns.admits(&candidate.relative)
+                || (context.patterns.includes.is_empty()
+                    && context.ignore.is_ignored(&candidate.relative, false))
+            {
+                continue;
+            }
+            let Some(kind) = SourceKind::from_native_path(&candidate.relative) else {
+                continue;
+            };
+            if reserved_state::semantic_input_resolves_into_reserved_state(
+                context.root,
+                &candidate.path,
+            )? {
+                continue;
+            }
+            source_candidates.push(SourceCandidate {
+                native_path: candidate.native_path,
+                relative: candidate.relative,
+                path: candidate.path,
+                kind,
+            });
+        }
+
+        let prepared = if parallel_file_workers {
+            source_candidates
+                .into_par_iter()
+                .map(|candidate| prepare_source(context, candidate))
+                .collect::<Vec<_>>()
+        } else {
+            source_candidates
+                .into_iter()
+                .map(|candidate| prepare_source(context, candidate))
+                .collect::<Vec<_>>()
+        };
+        let mut groups = BTreeMap::<PhysicalFileIdentity, Vec<PreparedSource>>::new();
+        for result in prepared {
+            match result? {
+                SourcePreparation::Ready(source) => {
+                    if context.reserved_state_lookup.contains_candidate(
+                        context.root,
+                        &source.candidate.path,
+                        source.opened.observation(),
+                    )? {
+                        continue;
+                    }
+                    groups
+                        .entry(source.opened.observation().identity.clone())
+                        .or_default()
+                        .push(source);
+                }
+                SourcePreparation::Unavailable(limitation) => {
+                    self.limitations.push(limitation);
+                }
+            }
+        }
+        let groups = groups.into_values().collect::<Vec<_>>();
+        let captured = if parallel_file_workers {
+            groups
+                .into_par_iter()
+                .map(|group| capture_source_group(context, group))
+                .collect::<Vec<_>>()
+        } else {
+            groups
+                .into_iter()
+                .map(|group| capture_source_group(context, group))
+                .collect::<Vec<_>>()
+        };
+        for result in captured {
+            let group = result?;
+            let mut reserved = false;
+            for (path, observation) in &group.observations {
+                reserved |= context.reserved_state_lookup.contains_candidate(
+                    context.root,
+                    path,
+                    observation,
+                )?;
+            }
+            if reserved {
+                self.limitations.extend(group.limitations);
+                continue;
+            }
+            if let Some(payload) = group.payload {
+                self.payloads
+                    .insert(group.physical_identity, Arc::clone(&payload));
+            }
+            self.limitations.extend(group.limitations);
+            for source in group.sources {
+                self.sources.insert(source.path.clone(), source);
+            }
+        }
+        Ok(())
+    }
+
     fn observe_file(
         &mut self,
         context: &FileObservationContext<'_>,

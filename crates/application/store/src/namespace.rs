@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use fs2::FileExt;
 use lumin_model::{RepositoryBinding, RepositoryId};
+use redb::{StorageBackend, backends::InMemoryBackend};
 
 use crate::{StoreError, io_error};
 use bootstrap::{BootstrapCrashPoint, bootstrap_namespace, hit as bootstrap_hit};
@@ -57,10 +58,7 @@ use store_header::*;
 
 pub(super) enum MigrationDatabase {
     Direct(redb::Database),
-    Detached {
-        database: redb::Database,
-        _unpublished: platform::UnpublishedFile,
-    },
+    Detached(redb::Database),
 }
 
 impl Deref for MigrationDatabase {
@@ -68,26 +66,25 @@ impl Deref for MigrationDatabase {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Direct(database) | Self::Detached { database, .. } => database,
+            Self::Direct(database) | Self::Detached(database) => database,
         }
     }
 }
 
 fn detached_database(
-    guard: &NamespaceGuard,
+    _guard: &NamespaceGuard,
     entry: &HeldEntry,
 ) -> Result<MigrationDatabase, StoreError> {
     let bytes = entry.read_all()?;
-    let unpublished =
-        platform::UnpublishedFile::create(&guard.state.state_dir, &guard.state_directory)?;
-    unpublished.entry().replace_contents(&bytes)?;
+    let backend = InMemoryBackend::new();
+    let length = u64::try_from(bytes.len())
+        .map_err(|_| StoreError::Integrity("lifecycle.store byte count overflow".to_owned()))?;
+    backend.set_len(length).map_err(io_error)?;
+    backend.write(0, &bytes).map_err(io_error)?;
     let database = redb::Database::builder()
-        .create_file(unpublished.entry().file().try_clone().map_err(io_error)?)
+        .create_with_backend(backend)
         .map_err(crate::backend_error)?;
-    Ok(MigrationDatabase::Detached {
-        database,
-        _unpublished: unpublished,
-    })
+    Ok(MigrationDatabase::Detached(database))
 }
 
 #[derive(Clone, Debug)]
@@ -291,9 +288,7 @@ impl NamespaceState {
         state_directory: HeldEntry,
         marker_path: PathBuf,
     ) -> Result<Self, StoreError> {
-        let state = Self::bind_existing(repository, state_dir, state_directory, marker_path)?;
-        state.ensure_store_ready()?;
-        Ok(state)
+        Self::bind_existing(repository, state_dir, state_directory, marker_path)
     }
 
     fn bind_existing(
@@ -334,6 +329,18 @@ impl NamespaceState {
         self.with_lock(
             true,
             LockPurpose::Ordinary,
+            None::<fn() -> Result<(), StoreError>>,
+            operation,
+        )
+    }
+
+    pub(super) fn with_admission_exclusive_lock<T>(
+        &self,
+        operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock(
+            true,
+            LockPurpose::Admission,
             None::<fn() -> Result<(), StoreError>>,
             operation,
         )
@@ -419,12 +426,10 @@ impl NamespaceState {
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
         let result = match purpose {
             LockPurpose::Ordinary => migration::require_idle(&guard)
-                .and_then(|()| guard.validate_complete())
-                .and_then(|()| {
-                    #[cfg(feature = "namespace-test-crash")]
-                    barrier::wait_after_complete_validation()?;
-                    guard.validate_complete()
-                })
+                .and_then(|()| guard.validate_complete_at_namespace_test_boundary())
+                .and_then(|()| operation(&guard)),
+            LockPurpose::Admission => migration::admit_ordinary(&guard)
+                .and_then(|()| guard.validate_complete_at_namespace_test_boundary())
                 .and_then(|()| operation(&guard)),
             LockPurpose::Migration => operation(&guard),
             #[cfg(any(
@@ -438,7 +443,7 @@ impl NamespaceState {
                 .and_then(|()| operation(&guard)),
         };
         let final_validation = match purpose {
-            LockPurpose::Ordinary => {
+            LockPurpose::Ordinary | LockPurpose::Admission => {
                 migration::require_idle(&guard).and_then(|()| guard.validate_complete())
             }
             LockPurpose::Migration => guard.validate_bound_entries(),
@@ -525,13 +530,8 @@ impl NamespaceState {
         FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
         let result = migration::admit_ordinary(&guard);
-        let final_validation = result
-            .and_then(|()| guard.validate_complete())
-            .and_then(|()| {
-                #[cfg(feature = "namespace-test-crash")]
-                barrier::wait_after_complete_validation()?;
-                guard.validate_complete()
-            });
+        let final_validation =
+            result.and_then(|()| guard.validate_complete_at_namespace_test_boundary());
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
     }
@@ -540,6 +540,7 @@ impl NamespaceState {
 #[derive(Clone, Copy)]
 enum LockPurpose {
     Ordinary,
+    Admission,
     Migration,
     #[cfg(any(
         test,
@@ -824,10 +825,19 @@ impl NamespaceGuard {
     }
 
     fn validate_complete(&self) -> Result<(), StoreError> {
-        self.validate_bound_entries()?;
         let database = self.open_database()?;
         drop(database);
-        self.validate_bound_entries()
+        Ok(())
+    }
+
+    fn validate_complete_at_namespace_test_boundary(&self) -> Result<(), StoreError> {
+        self.validate_complete()?;
+        #[cfg(feature = "namespace-test-crash")]
+        {
+            barrier::wait_after_complete_validation()?;
+            self.validate_complete()?;
+        }
+        Ok(())
     }
 
     pub(crate) fn validate_bound_entries(&self) -> Result<(), StoreError> {

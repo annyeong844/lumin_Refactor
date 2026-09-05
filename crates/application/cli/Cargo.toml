@@ -75,6 +75,9 @@ lumin-model = { path = "../../foundation/model" }
 lumin-protocol = { path = "../protocol" }
 thiserror.workspace = true
 
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+mimalloc.workspace = true
+
 [dev-dependencies]
 base64.workspace = true
 lumin-engine = { path = "../engine", features = ["gate-test-fault", "logical-store-snapshot-test"] }
