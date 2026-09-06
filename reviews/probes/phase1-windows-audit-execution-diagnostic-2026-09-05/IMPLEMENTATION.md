@@ -208,3 +208,37 @@ Remaining execution authority: run this source through the public Windows
 four-worker CI diagnostic and the required clean-checkout matrix. This local
 record does not close P1-60/P1-70, approve permanent runtime metrics or the
 allocator, or change the `/mnt` decision. The frozen W2 design is unchanged.
+
+## Hosted diagnostic admission
+
+[CI run 34009039891](https://github.com/annyeong844/lumin_Refactor/actions/runs/34009039891)
+tested PR head `5914f8f192cfc95aa2b324ad0c8f3ecc265949bb` through merge checkout
+`49be5c88a4d9358c4d84a272fa4642ff22a9957c`. Its Linux package and numeric
+matrix passed (four-worker cold ratio `0.6588600850998599`). The Windows
+ordinary matrix failed only the unchanged `0.75` scaling limit: default
+`1,619,004,800 ns`, one worker `1,739,429,700 ns`, ratio
+`0.930767595839027`. Both normal archives have 34 completed cells and 711
+independently size/hash-verified captures. The Windows report SHA-256 is
+`6fc27554431197cfbef8fe0cf5a6f0afbbdd7b1b9d9af086b49e7291cb7653f2`,
+and its archive manifest SHA-256 is
+`2226e0a5536e7497c5fd6c76ebe9bd115e5c16253d431ca0fb90358913aeed35`.
+
+The separate diagnostic build stopped before Cargo: the hosted source guard
+still required `RUNNER_TEMP/lumin-target` for every command, rejecting W2's
+reviewed `lumin-audit-diagnostic-target`. No diagnostic frame was produced;
+the failed upload is not a complete packet. The bootstrap now admits that
+exact separate target only for the three reviewed diagnostic build, focused
+test, and incompatible-feature-check commands. Ordinary control/probe/runner
+commands retain the ordinary target; crossed, redirected, arbitrary, and
+repository-owned targets and shared Cargo homes fail before Cargo admission.
+
+The correction changes only the Python bootstrap, its regression tests, and
+this execution record. All 27 bootstrap tests (including seven hosted-target
+tests) and 12 CI-policy tests pass on Windows and Linux/WSL2; the 19 locked
+xtask Cargo-bootstrap routing tests pass on Windows. The tests exercise the
+guard entrypoint with temporary repositories and isolated environment, retaining
+real declaration/policy checks and replacing only external tool boundaries.
+The hosted failure was reproduced before the correction. Cargo's expected
+incompatible-feature failure still propagates unchanged. Numeric criteria,
+the reviewed workflow body, and the frozen W2 design are unchanged; the public
+four-worker diagnostic still requires a new CI packet.
