@@ -481,6 +481,71 @@ class HostedTargetTests(unittest.TestCase):
             self.assertTrue(launch.called)
 
 
+class HostedStoreTargetTests(HostedTargetTests):
+    # Independently authored W3 vectors; inherited tests exercise the same
+    # real guard entrypoint, isolation failures, and Cargo exit propagation.
+    diagnostic_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-store-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-store-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-store-test-profile,lifecycle-test-fault", "--locked"),
+    )
+    ordinary_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--locked"),
+        ("cargo", "test", "-p", "lumin-cli", "--test", "audit_store_diagnostic",
+         "--features", "audit-execution-profile-probe", "--locked"),
+        ("cargo", "run", "--locked", "-p", "lumin-xtask", "--", "benchmark",
+         "foundation", "--diagnose-cold-audit-store"),
+    )
+
+    def invoke(self, fixture, command, target, **kwargs):
+        # The shared test cases supply the W2 target spelling; this partition
+        # maps only that exact leaf to its separately authored W3 leaf.
+        if target is not None and target.name == "lumin-audit-diagnostic-target":
+            target = target.with_name("lumin-audit-store-diagnostic-target")
+        return super().invoke(fixture, command, target, **kwargs)
+
+    def test_redirected_hosted_targets_fail_before_cargo(self):
+        for command, name in (
+            (self.ordinary_commands[0], "lumin-target"),
+            (self.diagnostic_commands[0], "lumin-audit-store-diagnostic-target"),
+        ):
+            with self.subTest(target=name), Fixture() as fixture:
+                target = fixture.base / "runner" / name
+                target.parent.mkdir()
+                destination = fixture.base / "redirected-target"
+                destination.mkdir()
+                if os.name == "nt":
+                    subprocess.run(("cmd", "/c", "mklink", "/J", str(target), str(destination)),
+                                   shell=False, check=True, capture_output=True)
+                else:
+                    target.symlink_to(destination, target_is_directory=True)
+                status, errors, metadata, launch = self.invoke(fixture, command, target)
+                self.assertEqual(status, 2)
+                self.assertIn("GitHub Cargo target is redirected", errors)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+    def test_w2_w3_and_control_targets_cannot_cross(self):
+        cases = [
+            (command, "lumin-audit-store-diagnostic-target")
+            for command in HostedTargetTests.diagnostic_commands + self.ordinary_commands
+        ] + [
+            (command, "lumin-audit-diagnostic-target") for command in self.diagnostic_commands
+        ] + [
+            ((*self.diagnostic_commands[0], "--features", "lifecycle-test-fault"),
+             "lumin-audit-store-diagnostic-target"),
+        ]
+        for command, name in cases:
+            with self.subTest(command=command, target=name), Fixture() as fixture:
+                status, _, metadata, launch = super().invoke(fixture, command, fixture.base / "runner" / name)
+                self.assertEqual(status, 2)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+
 class DependencySurfaceTests(unittest.TestCase):
     def test_policy_is_small_direct_and_includes_the_development_tool(self) -> None:
         with Fixture() as fixture:

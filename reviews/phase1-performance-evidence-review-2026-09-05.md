@@ -25,17 +25,17 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI matrix](https://github.com/annyeong844/lumin_Refactor/actions/runs/33960297104)
-on `a83ee602dfaf1d62c16f8f9f68f6111c81c203fb` passes the functional, crash,
+The [latest completed public CI packet](probes/phase1-windows-audit-execution-diagnostic-2026-09-05/CI-EVIDENCE.md)
+on head `062964192a1d3f16f5b7739f0d98eb85ac5bef4d` / merge checkout
+`e126a73d5af15d77e9bfd454fd431e9b4ead6f89` passes the functional, crash,
 determinism, and native Linux package checks. Windows still misses only the
-numeric scaling target: default-four-worker median `1,756,281,200 ns` versus
-`2,023,961,300 ns` for `jobs=1`, ratio `0.8677444573668479`. Its report SHA-256
-is `456b57e95910007f921a5be6887534385e9b51b36e5efe93c1f7f53ac3928399`.
-Native Linux completes all seven modes with ratio `0.7237935075487433` and no
-numeric target miss; its report SHA-256 is
-`43a5abc3c60da3ba9f37cd1fe8e08c3cc87edaca86fa4fe183535de579802ec6`.
-Neither these matrices nor the earlier local reports establish the outcome of
-subsequent product changes. Fresh blocking measurements remain required.
+numeric scaling target: default-four-worker median `3,116,713,800 ns` versus
+`3,169,005,900 ns` for `jobs=1`, ratio `0.9834988947164788`. Native Linux
+completes all seven modes with ratio `0.671960372272139` and no numeric miss.
+The packet retains report/capture hashes, exact build identities, and the
+successful but nonauthoritative W2 diagnostic. Neither it nor earlier local
+reports establishes the outcome of subsequent product changes. Fresh blocking
+measurements remain required.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It
@@ -59,7 +59,7 @@ determinism. Missing observations must remain unavailable, never be replaced by
 requested values or zero times. Any new public transport or persisted shape
 requires its owning contract to be reviewed before implementation.
 
-### Windows cold-audit diagnostic candidate
+### Windows cold-audit diagnosis
 
 The [W2 diagnostic design](probes/phase1-windows-audit-execution-diagnostic-2026-09-05/DESIGN.md)
 defines a separate feature-built, non-distributable public-audit probe and an
@@ -75,6 +75,21 @@ user's 2026-09-05 approval freezing W2 for diagnostic implementation. This
 narrow candidate is for bottleneck diagnosis, not an amendment that fulfills
 permanent run/gate observability. It does not approve the allocator, `/mnt`
 disposition, or Phase 1 exit.
+
+The [actual W2 CI evidence](probes/phase1-windows-audit-execution-diagnostic-2026-09-05/CI-EVIDENCE.md)
+now supplies diagnostic-only worker/stack and 23-phase observations. Within
+each default-worker sample, store-open, attempt-begin, and publication self
+time account for about 79% of the command. These remain opaque owner regions,
+not measured backend flush or lock-wait time. Permanent metrics remain open.
+
+The frozen diagnostic scope is [W3 store-call observation](probes/phase1-windows-audit-store-diagnostic-2026-09-06/DESIGN.md),
+with its [review disposition](probes/phase1-windows-audit-store-diagnostic-2026-09-06/REVIEW.md).
+It specifies a separate diagnostic extension/version, exact store-owned
+intervals, and hosted build/capture isolation. Author and independent design
+reviews pass for its corrected exact candidate; the owner approved freezing
+and implementing that hash on 2026-09-06. Its review record binds the unchanged
+candidate bytes. W3 grants no performance-change authority. W2's approved bytes
+and the ordinary budget stay unchanged.
 
 ## Proposed WSL `/mnt` disposition
 

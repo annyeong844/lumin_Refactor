@@ -113,6 +113,15 @@ mod recorder {
             self.observation.configured_worker_stack_bytes = Some(stack);
         }
 
+        #[cfg(feature = "audit-store-test-profile")]
+        pub(crate) fn store(
+            &mut self,
+            root: lumin_model::audit_store_diagnostic::AuditStorePhase,
+            timings: lumin_model::audit_store_diagnostic::AuditStoreTimings,
+        ) {
+            self.observation.store_timings.merge_root(root, timings);
+        }
+
         pub(crate) fn finish(mut self) -> AuditPoolObservation {
             if self.depth != 0 {
                 self.observation

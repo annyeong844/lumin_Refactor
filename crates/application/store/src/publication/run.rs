@@ -21,17 +21,38 @@ pub(super) fn publish(
     preflight: impl FnOnce(
         &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
     ) -> Result<PreparedRunEvidence, StoreError>,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<PublishedRun, StoreError> {
     if !session.belongs_to(store) {
         return Err(StoreError::Integrity(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
-    let (envelope, record) = prepare_publication(store, session, preflight)?;
+    store_phase_begin!(profile, PublishPrepare);
+    let (envelope, record) = prepare_publication(
+        store,
+        session,
+        preflight,
+        #[cfg(feature = "audit-store-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    store_phase_end!(profile, PublishPrepare);
     #[cfg(feature = "publication-test-crash")]
     super::barrier::wait_prepared(session.attempt_id())?;
 
-    finalize_publication(store, session, &envelope, &record)
+    store_phase_begin!(profile, PublishFinalize);
+    let result = finalize_publication(
+        store,
+        session,
+        &envelope,
+        &record,
+        #[cfg(feature = "audit-store-test-profile")]
+        profile.as_deref_mut(),
+    );
+    store_phase_end!(profile, PublishFinalize);
+    result
 }
 
 fn prepare_publication(
@@ -40,30 +61,62 @@ fn prepare_publication(
     preflight: impl FnOnce(
         &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
     ) -> Result<PreparedRunEvidence, StoreError>,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<(AttemptEnvelope, RunCatalogRecord), StoreError> {
-    store.with_shared_lock(|guard| {
-        session
-            .validate(guard)
-            .map_err(|error| publication_error("validate attempt session", error))?;
-        let mut envelope = latest::read_attempt(store, guard, session.attempt_id())
-            .map_err(|error| publication_error("read running attempt", error))?;
-        session.require_running(&envelope)?;
-        let reserved_state_identities = guard.reserved_state_identities()?;
-        let evidence = preflight(&reserved_state_identities)
-            .map_err(|error| publication_error("validate run publication inputs", error))?;
+    store_profile_lock!(
+        store,
+        with_shared_lock,
+        false,
+        false,
+        profile,
+        PublishPrepareEnter,
+        PublishPrepareExit,
+        |guard| {
+            store_phase_begin!(profile, PublishSession);
+            session
+                .validate(guard)
+                .map_err(|error| publication_error("validate attempt session", error))?;
+            store_phase_end!(profile, PublishSession);
+            store_phase_begin!(profile, PublishEnvelope);
+            let mut envelope = latest::read_attempt(store, guard, session.attempt_id())
+                .map_err(|error| publication_error("read running attempt", error))?;
+            session.require_running(&envelope)?;
+            store_phase_end!(profile, PublishEnvelope);
+            store_phase_begin!(profile, PublishIdentities);
+            let reserved_state_identities = guard.reserved_state_identities()?;
+            store_phase_end!(profile, PublishIdentities);
+            store_phase_begin!(profile, PublishPreflight);
+            let evidence = preflight(&reserved_state_identities)
+                .map_err(|error| publication_error("validate run publication inputs", error))?;
+            store_phase_end!(profile, PublishPreflight);
 
-        let record = publish_directory(store, guard, &envelope, &evidence, session.generation())
+            store_phase_begin!(profile, PublishDirectory);
+            let record = publish_directory(
+                store,
+                guard,
+                &envelope,
+                &evidence,
+                session.generation(),
+                #[cfg(feature = "audit-store-test-profile")]
+                profile.as_deref_mut(),
+            )
             .map_err(|error| publication_error("publish run directory", error))?;
-        hit_after_run_rename();
+            store_phase_end!(profile, PublishDirectory);
+            hit_after_run_rename();
 
-        envelope.state = AttemptStatus::Completed;
-        envelope.finished_unix_millis = Some(unix_millis()?);
-        envelope.run_id = Some(record.run_id.clone());
-        liveness::write_terminal(store, guard, session.generation(), &envelope)
-            .map_err(|error| publication_error("publish terminal attempt", error))?;
-        hit_after_terminal_attempt();
-        Ok((envelope, record))
-    })
+            envelope.state = AttemptStatus::Completed;
+            envelope.finished_unix_millis = Some(unix_millis()?);
+            envelope.run_id = Some(record.run_id.clone());
+            store_phase_begin!(profile, PublishTerminal);
+            liveness::write_terminal(store, guard, session.generation(), &envelope)
+                .map_err(|error| publication_error("publish terminal attempt", error))?;
+            store_phase_end!(profile, PublishTerminal);
+            hit_after_terminal_attempt();
+            Ok((envelope, record))
+        }
+    )
 }
 
 fn finalize_publication(
@@ -71,6 +124,9 @@ fn finalize_publication(
     session: &mut liveness::AttemptSession<'_>,
     expected_envelope: &AttemptEnvelope,
     expected_record: &RunCatalogRecord,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<PublishedRun, StoreError> {
     #[cfg(feature = "publication-test-crash")]
     let attempt_id = session.attempt_id().clone();
@@ -79,14 +135,41 @@ fn finalize_publication(
     {
         store.with_exclusive_lock_after_contention(
             || super::barrier::wait_contended(&attempt_id),
-            |guard| finalize_under_guard(store, guard, session, expected_envelope, expected_record),
+            |guard| {
+                finalize_under_guard(
+                    store,
+                    guard,
+                    session,
+                    expected_envelope,
+                    expected_record,
+                    #[cfg(feature = "audit-store-test-profile")]
+                    None,
+                )
+            },
         )
     }
     #[cfg(not(feature = "publication-test-crash"))]
     {
-        store.with_exclusive_lock(|guard| {
-            finalize_under_guard(store, guard, session, expected_envelope, expected_record)
-        })
+        store_profile_lock!(
+            store,
+            with_exclusive_lock,
+            true,
+            false,
+            profile,
+            PublishFinalizeEnter,
+            PublishFinalizeExit,
+            |guard| {
+                finalize_under_guard(
+                    store,
+                    guard,
+                    session,
+                    expected_envelope,
+                    expected_record,
+                    #[cfg(feature = "audit-store-test-profile")]
+                    profile.as_deref_mut(),
+                )
+            }
+        )
     }
 }
 
@@ -96,7 +179,11 @@ fn finalize_under_guard(
     session: &mut liveness::AttemptSession<'_>,
     expected_envelope: &AttemptEnvelope,
     expected_record: &RunCatalogRecord,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<PublishedRun, StoreError> {
+    store_phase_begin!(profile, FinalizeCandidate);
     session
         .validate(guard)
         .map_err(|error| publication_error("validate attempt session", error))?;
@@ -108,15 +195,22 @@ fn finalize_under_guard(
         expected_envelope,
         expected_record,
     )?;
+    store_phase_end!(profile, FinalizeCandidate);
 
+    store_phase_begin!(profile, FinalizeCatalog);
     let database = guard.open_database_for_generation(session.generation())?;
     insert_catalog_record(guard, &database, &record)
         .map_err(|error| publication_error("publish run catalog", error))?;
     drop(database);
+    store_phase_end!(profile, FinalizeCatalog);
+    store_phase_begin!(profile, FinalizeLatest);
     latest::publish_attempt(store, guard, &envelope, true)
         .map_err(|error| publication_error("publish latest pointer", error))?;
+    store_phase_end!(profile, FinalizeLatest);
+    store_phase_begin!(profile, FinalizeRelease);
     liveness::release_session(store, guard, session)
         .map_err(|error| publication_error("release attempt lease", error))?;
+    store_phase_end!(profile, FinalizeRelease);
     Ok(PublishedRun {
         attempt_id: record.attempt_id,
         run_id: record.run_id,
@@ -204,6 +298,9 @@ fn publish_directory(
     envelope: &AttemptEnvelope,
     evidence: &PreparedRunEvidence,
     generation: crate::StoreGeneration,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<RunCatalogRecord, StoreError> {
     let run_id = run_id(envelope.sequence);
     let parent = guard.managed_parent_entry(ManagedStateParentKind::Runs)?;
@@ -216,12 +313,14 @@ fn publish_directory(
         )));
     }
 
+    store_phase_begin!(profile, StagingCreate);
     guard
         .mutate_for_generation(generation, || {
             fs::create_dir(&staging).map_err(io_error)?;
             parent.sync_directory()
         })
         .map_err(|error| publication_error("create staging directory", error))?;
+    store_phase_end!(profile, StagingCreate);
     let staging_write_entry = HeldEntry::open(
         &staging,
         EntryKind::Directory,
@@ -230,8 +329,16 @@ fn publish_directory(
         "run staging directory",
     )?;
     files::require_parent_volume(&staging_write_entry, parent, "run staging directory")?;
-    let record = write_staging(&staging, &staging_write_entry, envelope, &run_id, evidence)
-        .map_err(|error| publication_error("write staging payload", error))?;
+    let record = write_staging(
+        &staging,
+        &staging_write_entry,
+        envelope,
+        &run_id,
+        evidence,
+        #[cfg(feature = "audit-store-test-profile")]
+        profile.as_deref_mut(),
+    )
+    .map_err(|error| publication_error("write staging payload", error))?;
     let staging_entry = HeldEntry::open(
         &staging,
         EntryKind::Directory,
@@ -247,6 +354,7 @@ fn publish_directory(
     files::require_parent_volume(&staging_entry, parent, "run staging directory")?;
     drop(staging_write_entry);
 
+    store_phase_begin!(profile, StagingMove);
     guard
         .mutate_for_generation(generation, || {
             validate_written_directory(&staging, &staging_entry, &record, evidence.row())
@@ -280,8 +388,11 @@ fn publish_directory(
             )
         })
         .map_err(|error| publication_error("rename staging directory", error))?;
+    store_phase_end!(profile, StagingMove);
+    store_phase_begin!(profile, PublishedValidation);
     revalidate_directory_identity(&published, &staging_entry, &record)
         .map_err(|error| publication_error("validate published run", error))?;
+    store_phase_end!(profile, PublishedValidation);
     Ok(record)
 }
 
@@ -291,10 +402,21 @@ fn write_staging(
     envelope: &AttemptEnvelope,
     run_id: &RunId,
     evidence: &PreparedRunEvidence,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<RunCatalogRecord, StoreError> {
     let evidence_path = staging.join("evidence.store");
-    write_evidence_store(&evidence_path, evidence)
-        .map_err(|error| publication_error("create evidence store", error))?;
+    store_phase_begin!(profile, EvidenceWrite);
+    write_evidence_store(
+        &evidence_path,
+        evidence,
+        #[cfg(feature = "audit-store-test-profile")]
+        profile.as_deref_mut(),
+    )
+    .map_err(|error| publication_error("create evidence store", error))?;
+    store_phase_end!(profile, EvidenceWrite);
+    store_phase_begin!(profile, EvidenceBindFlushHash);
     let evidence_entry = HeldEntry::open(
         &evidence_path,
         EntryKind::RegularFile,
@@ -318,6 +440,8 @@ fn write_staging(
         evidence_store_sha256: digest_hex(&evidence_bytes),
         evidence_store_size: evidence_bytes.len() as u64,
     };
+    store_phase_end!(profile, EvidenceBindFlushHash);
+    store_phase_begin!(profile, RunEnvelope);
     files::write_json(
         &staging.join("run.json"),
         staging_entry,
@@ -325,9 +449,12 @@ fn write_staging(
         &record,
     )
     .map_err(|error| publication_error("write run envelope", error))?;
+    store_phase_end!(profile, RunEnvelope);
+    store_phase_begin!(profile, StagingFlush);
     staging_entry
         .sync_directory()
         .map_err(|error| publication_error("flush staging directory", error))?;
+    store_phase_end!(profile, StagingFlush);
     Ok(record)
 }
 

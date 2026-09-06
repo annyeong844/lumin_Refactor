@@ -265,19 +265,19 @@ class DiagnosticStepControlTests(unittest.TestCase):
             with self.subTest(benchmark=benchmark, diagnostic=diagnostic):
                 outcomes = dict.fromkeys(("control_build", "package_stage", "package_probe", "skill_probe"), "success")
                 outcomes["benchmark"] = benchmark
-                self.assertTrue(admitted("Build isolated Windows audit diagnostic", outcomes))
+                self.assertTrue(admitted("Build isolated Windows audit store diagnostic", outcomes))
                 outcomes["diagnostic_build"] = "success"
                 self.assertTrue(admitted("Probe diagnostic public transport", outcomes))
                 outcomes["diagnostic_probe"] = "success"
-                self.assertTrue(admitted("Diagnose Windows cold audit", outcomes))
+                self.assertTrue(admitted("Diagnose Windows cold audit store", outcomes))
                 outcomes["diagnostic"] = diagnostic
                 self.assertTrue(admitted("Retain benchmark report", outcomes))
                 self.assertTrue(admitted("Retain Windows diagnostic packet even on failure", outcomes))
                 self.assertFalse(all(value == "success" for value in outcomes.values()))
                 self.assertIn("lumin-foundation-captures-", blocks["Retain benchmark report"])
-                self.assertIn("lumin-audit-diagnostic-captures/", blocks["Retain Windows diagnostic packet even on failure"])
+                self.assertIn("lumin-audit-store-diagnostic-captures/", blocks["Retain Windows diagnostic packet even on failure"])
         outcomes["package_probe"] = "failure"
-        self.assertFalse(admitted("Build isolated Windows audit diagnostic", outcomes))
+        self.assertFalse(admitted("Build isolated Windows audit store diagnostic", outcomes))
 
 
 if __name__ == "__main__":

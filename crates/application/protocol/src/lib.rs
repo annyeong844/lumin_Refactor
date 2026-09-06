@@ -1,5 +1,7 @@
 #[cfg(feature = "audit-execution-test-profile")]
 pub mod audit_diagnostic;
+#[cfg(feature = "audit-store-test-profile")]
+pub mod audit_store_diagnostic;
 mod cursor;
 mod gate_query;
 mod path_dto;

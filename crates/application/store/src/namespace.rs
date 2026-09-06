@@ -198,7 +198,13 @@ impl NamespaceState {
         Self::open_bound(repository, state_dir, state_directory, marker_path).map(Some)
     }
 
-    pub(super) fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
+    pub(super) fn open(
+        root: &Path,
+        binding: &RepositoryBinding,
+        #[cfg(feature = "audit-store-test-profile")] profile: Option<
+            &mut crate::audit_profile::StoreProfiler,
+        >,
+    ) -> Result<Self, StoreError> {
         let repository = HeldRepository::open(root, binding.clone())?;
         let state_dir = repository.path.join(".lumin");
         bootstrap_hit(BootstrapCrashPoint::BeforeStateDirectory);
@@ -223,6 +229,8 @@ impl NamespaceState {
                 state_dir,
                 state_directory,
                 state_directory_created,
+                #[cfg(feature = "audit-store-test-profile")]
+                profile,
             );
         }
 
@@ -407,6 +415,78 @@ impl NamespaceState {
     where
         C: FnOnce() -> Result<(), StoreError>,
     {
+        self.with_lock_core(
+            exclusive,
+            purpose,
+            on_contention,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+            |guard, #[cfg(feature = "audit-store-test-profile")] _profile| operation(guard),
+        )
+    }
+
+    #[cfg(feature = "audit-store-test-profile")]
+    pub(super) fn with_profiled_lock<T>(
+        &self,
+        exclusive: bool,
+        admission: bool,
+        profile: Option<&mut crate::audit_profile::StoreProfiler>,
+        phases: (
+            lumin_model::audit_store_diagnostic::AuditStorePhase,
+            lumin_model::audit_store_diagnostic::AuditStorePhase,
+        ),
+        operation: impl FnOnce(
+            &NamespaceGuard,
+            Option<&mut crate::audit_profile::StoreProfiler>,
+        ) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock_core(
+            exclusive,
+            if admission {
+                LockPurpose::Admission
+            } else {
+                LockPurpose::Ordinary
+            },
+            None::<fn() -> Result<(), StoreError>>,
+            profile,
+            Some(phases),
+            operation,
+        )
+    }
+
+    fn with_lock_core<T, C>(
+        &self,
+        exclusive: bool,
+        purpose: LockPurpose,
+        on_contention: Option<C>,
+        #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+            &mut crate::audit_profile::StoreProfiler,
+        >,
+        #[cfg(feature = "audit-store-test-profile")] phases: Option<(
+            lumin_model::audit_store_diagnostic::AuditStorePhase,
+            lumin_model::audit_store_diagnostic::AuditStorePhase,
+        )>,
+        #[cfg(not(feature = "audit-store-test-profile"))] operation: impl FnOnce(
+            &NamespaceGuard,
+        ) -> Result<
+            T,
+            StoreError,
+        >,
+        #[cfg(feature = "audit-store-test-profile")] operation: impl FnOnce(
+            &NamespaceGuard,
+            Option<&mut crate::audit_profile::StoreProfiler>,
+        )
+            -> Result<T, StoreError>,
+    ) -> Result<T, StoreError>
+    where
+        C: FnOnce() -> Result<(), StoreError>,
+    {
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((enter, _))) = (profile.as_deref_mut(), phases) {
+            profile.begin(enter);
+        }
         let lock = self.open_prevalidated_lock()?;
         if exclusive {
             match on_contention {
@@ -441,7 +521,21 @@ impl NamespaceState {
             }
         };
         let admitted = admission.is_ok();
-        let result = admission.and_then(|()| operation(&guard));
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((enter, _))) = (profile.as_deref_mut(), phases) {
+            profile.end(enter);
+        }
+        let result = admission.and_then(|()| {
+            operation(
+                &guard,
+                #[cfg(feature = "audit-store-test-profile")]
+                profile.as_deref_mut(),
+            )
+        });
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((_, exit))) = (profile.as_deref_mut(), phases) {
+            profile.begin(exit);
+        }
         let final_validation = if !admitted {
             // A refused schema must not be reopened by redb in writable mode. Even opening and
             // closing that handle can change its recovery metadata without a user transaction.
@@ -464,7 +558,12 @@ impl NamespaceState {
             }
         };
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
-        combine_lock_results(result, final_validation, unlock)
+        let result = combine_lock_results(result, final_validation, unlock);
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((_, exit))) = (profile, phases) {
+            profile.end(exit);
+        }
+        result
     }
 
     fn open_prevalidated_lock(&self) -> Result<HeldEntry, StoreError> {

@@ -212,6 +212,8 @@ impl AuditTimings {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AuditPoolObservation {
     pub timings: AuditTimings,
+    #[cfg(feature = "audit-store-test-profile")]
+    pub store_timings: super::audit_store_diagnostic::AuditStoreTimings,
     pub actual_jobs: Option<usize>,
     pub configured_worker_stack_bytes: Option<usize>,
 }

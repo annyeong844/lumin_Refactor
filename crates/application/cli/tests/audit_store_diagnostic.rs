@@ -5,7 +5,7 @@ mod probe;
 #[test]
 fn actual_release_children_report_concrete_pool_and_unchanged_semantics()
 -> Result<(), Box<dyn std::error::Error>> {
-    probe::actual_release_children_report_concrete_pool_and_unchanged_semantics(false)
+    probe::actual_release_children_report_concrete_pool_and_unchanged_semantics(true)
 }
 #[test]
 fn diagnostic_transport_failure_preserves_exactly_one_committed_run()

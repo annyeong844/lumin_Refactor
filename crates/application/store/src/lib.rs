@@ -1,9 +1,26 @@
+#[macro_use]
+mod audit_profile;
 mod cache;
 mod gate;
 mod generation;
 mod namespace;
 mod publication;
 mod retention;
+
+#[cfg(all(
+    feature = "audit-store-test-profile",
+    any(
+        feature = "cache-cleanup-test-fault",
+        feature = "collection-ordering-test-perturb",
+        feature = "lifecycle-migration-test-fault",
+        feature = "namespace-test-crash",
+        feature = "publication-test-crash",
+        feature = "retention-test-crash"
+    )
+))]
+compile_error!(
+    "audit-execution-test-profile cannot be combined with fault/crash/perturbation features (enabled by audit-store-test-profile)"
+);
 
 pub use gate::{
     ActiveGateCatalogCursor, ActiveGateCatalogItem, ActiveGateCatalogSnapshot, ActiveGateLease,
@@ -380,8 +397,50 @@ pub enum StoreError {
 
 impl RepositoryStore {
     pub fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
-        let namespace = namespace::NamespaceState::open(root, binding)?;
-        Self::from_namespace(namespace)
+        Self::open_core(
+            root,
+            binding,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    #[cfg(feature = "audit-store-test-profile")]
+    pub fn open_observed(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> (
+        Result<Self, StoreError>,
+        lumin_model::audit_store_diagnostic::AuditStoreTimings,
+    ) {
+        use lumin_model::audit_store_diagnostic::AuditStorePhase;
+        let mut recorder = audit_profile::StoreProfiler::new(AuditStorePhase::StoreOpen);
+        recorder.begin(AuditStorePhase::StoreOpen);
+        let result = Self::open_core(root, binding, Some(&mut recorder));
+        recorder.end(AuditStorePhase::StoreOpen);
+        (result, recorder.finish())
+    }
+
+    fn open_core(
+        root: &Path,
+        binding: &RepositoryBinding,
+        #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+            &mut audit_profile::StoreProfiler,
+        >,
+    ) -> Result<Self, StoreError> {
+        store_phase_begin!(profile, NamespaceOpen);
+        let namespace = namespace::NamespaceState::open(
+            root,
+            binding,
+            #[cfg(feature = "audit-store-test-profile")]
+            profile.as_deref_mut(),
+        )?;
+        store_phase_end!(profile, NamespaceOpen);
+        Self::from_namespace_core(
+            namespace,
+            #[cfg(feature = "audit-store-test-profile")]
+            profile,
+        )
     }
 
     /// Open only a marker-bound namespace without creating or resuming state.
@@ -395,12 +454,30 @@ impl RepositoryStore {
     }
 
     fn from_namespace(namespace: namespace::NamespaceState) -> Result<Self, StoreError> {
+        Self::from_namespace_core(
+            namespace,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    fn from_namespace_core(
+        namespace: namespace::NamespaceState,
+        #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+            &mut audit_profile::StoreProfiler,
+        >,
+    ) -> Result<Self, StoreError> {
         let state_dir = namespace.state_dir().to_path_buf();
         let store = Self {
             state_dir,
             namespace,
         };
-        store.recover_publication()?;
+        store_phase_begin!(profile, OpenRecovery);
+        store.recover_publication(
+            #[cfg(feature = "audit-store-test-profile")]
+            profile.as_deref_mut(),
+        )?;
+        store_phase_end!(profile, OpenRecovery);
         Ok(store)
     }
 
@@ -725,9 +802,20 @@ pub fn prepare_run_evidence(evidence: &RunEvidence) -> Result<PreparedRunEvidenc
     Ok(PreparedRunEvidence { row })
 }
 
-fn write_evidence_store(path: &Path, evidence: &PreparedRunEvidence) -> Result<(), StoreError> {
+fn write_evidence_store(
+    path: &Path,
+    evidence: &PreparedRunEvidence,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut audit_profile::StoreProfiler,
+    >,
+) -> Result<(), StoreError> {
+    store_phase_begin!(profile, EvidenceCreate);
     let database = Database::create(path).map_err(backend_error)?;
+    store_phase_end!(profile, EvidenceCreate);
+    store_phase_begin!(profile, EvidenceBeginWrite);
     let write = database.begin_write().map_err(backend_error)?;
+    store_phase_end!(profile, EvidenceBeginWrite);
+    store_phase_begin!(profile, EvidenceRows);
     {
         let mut table = write.open_table(EVIDENCE).map_err(backend_error)?;
         // redb reserves a power-of-two page extent for one large variable-width value. A 63 KiB
@@ -739,8 +827,13 @@ fn write_evidence_store(path: &Path, evidence: &PreparedRunEvidence) -> Result<(
             table.insert(key.as_str(), chunk).map_err(backend_error)?;
         }
     }
+    store_phase_end!(profile, EvidenceRows);
+    store_phase_begin!(profile, EvidenceCommit);
     write.commit().map_err(backend_error)?;
+    store_phase_end!(profile, EvidenceCommit);
+    store_phase_begin!(profile, EvidenceClose);
     drop(database);
+    store_phase_end!(profile, EvidenceClose);
     Ok(())
 }
 
@@ -899,7 +992,12 @@ mod evidence_store_tests {
         let row = (0..(EVIDENCE_CHUNK_BYTES * 2 + 17))
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
-        write_evidence_store(&path, &PreparedRunEvidence { row: row.clone() })?;
+        write_evidence_store(
+            &path,
+            &PreparedRunEvidence { row: row.clone() },
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )?;
 
         let store_bytes = fs::read(&path)?;
         assert_eq!(read_evidence_store_row(&store_bytes)?, row);

@@ -26,7 +26,7 @@ const PHASES: &[&str] = &[
     "stdout",
 ];
 
-fn frame() -> Value {
+pub(super) fn frame() -> Value {
     serde_json::json!({
         "schemaVersion":"lumin.audit-execution-diagnostic.v1", "diagnosticOnly":true,
         "buildId":"build_fixture", "processId":1, "attemptId":"attempt_fixture", "runId":"run_fixture",
@@ -41,7 +41,7 @@ fn frame() -> Value {
     })
 }
 
-fn canonical(value: Value) -> Result<Vec<u8>, String> {
+pub(super) fn canonical(value: Value) -> Result<Vec<u8>, String> {
     // DTO encoding supplies the reviewed field order; the values/phase oracle above
     // are independently authored, not copied from a product run.
     let dto: AuditDiagnosticDto =
@@ -130,11 +130,19 @@ fn closed_decoder_rejects_missing_duplicate_unknown_and_inconsistent_phases() ->
 
 #[test]
 fn public_child_frame_is_bound_to_observed_pid_and_preserves_bad_raw_bytes() -> Result<(), String> {
+    scripted_frames(Version::Execution)
+}
+
+pub(super) fn scripted_frames(version: Version) -> Result<(), String> {
     let python = measurement::require_python()?;
     let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
     let helper = workspace.join("tools/xtask/benchmark/measure-process.py");
     let fixture = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let template = String::from_utf8(canonical(frame())?).map_err(|error| error.to_string())?;
+    let template = String::from_utf8(match version {
+        Version::Execution => canonical(frame())?,
+        Version::Store => super::store_tests::canonical(super::store_tests::value())?,
+    })
+    .map_err(|error| error.to_string())?;
     let payload_before = hash_file(&python)?;
     for mode in [
         "valid",
@@ -211,7 +219,14 @@ sys.exit(1 if mode=='failed' else 0)
             .map_err(Clone::clone)
             .and_then(|measured| {
                 let bytes = fs::read(capture.join("stderr")).map_err(|error| error.to_string())?;
-                validate_frame(&bytes, &measured.raw, &measured.response, build, Some(1))
+                validate_versioned_frame(
+                    version,
+                    &bytes,
+                    &measured.raw,
+                    &measured.response,
+                    build,
+                    Some(1),
+                )
             });
         assert_eq!(valid.is_ok(), mode == "valid", "{mode}: {valid:?}");
         assert!(capture.join("stdout").is_file());
@@ -222,7 +237,8 @@ sys.exit(1 if mode=='failed' else 0)
             let mut child_observation = measured.raw.clone();
             child_observation["analysisChildPids"] = serde_json::json!([27]);
             assert!(
-                validate_frame(
+                validate_versioned_frame(
+                    version,
                     &fs::read(capture.join("stderr")).map_err(|error| error.to_string())?,
                     &child_observation,
                     &measured.response,

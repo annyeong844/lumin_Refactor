@@ -296,10 +296,12 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     #[cfg(feature = "audit-execution-test-profile")]
     let result = result.map(|mut result| {
         result.audit_diagnostic = pool_profile.finish();
-        result
-            .audit_diagnostic
-            .timings
-            .merge(work_profile.finish().timings);
+        let work = work_profile.finish();
+        result.audit_diagnostic.timings.merge(work.timings);
+        #[cfg(feature = "audit-store-test-profile")]
+        {
+            result.audit_diagnostic.store_timings = work.store_timings;
+        }
         result
     });
     result
@@ -317,7 +319,20 @@ fn audit_in_current_pool(
     lumin_inventory::validate_caller_entries(&admission.canonical_root, &request.entries)?;
     audit_phase_end!(profile, Admission);
     audit_phase_begin!(profile, StoreOpen);
+    #[cfg(not(feature = "audit-store-test-profile"))]
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    #[cfg(feature = "audit-store-test-profile")]
+    let store = {
+        let (result, timings) =
+            RepositoryStore::open_observed(&admission.canonical_root, &admission.binding);
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.store(
+                lumin_model::audit_store_diagnostic::AuditStorePhase::StoreOpen,
+                timings,
+            );
+        }
+        result?
+    };
     audit_phase_end!(profile, StoreOpen);
     audit_phase_begin!(profile, EntryIdentities);
     let context = repository_context_from_admission(admission, store);
@@ -330,7 +345,19 @@ fn audit_in_current_pool(
     )?;
     audit_phase_end!(profile, EntryIdentities);
     audit_phase_begin!(profile, AttemptBegin);
+    #[cfg(not(feature = "audit-store-test-profile"))]
     let mut attempt = store.begin_attempt()?;
+    #[cfg(feature = "audit-store-test-profile")]
+    let mut attempt = {
+        let (result, timings) = store.begin_attempt_observed();
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.store(
+                lumin_model::audit_store_diagnostic::AuditStorePhase::AttemptBegin,
+                timings,
+            );
+        }
+        result?
+    };
     audit_phase_end!(profile, AttemptBegin);
     let inventory_request = InventoryRequest {
         includes: request.includes.clone(),

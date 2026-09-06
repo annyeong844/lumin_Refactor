@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+audit-store-test-profile = ["audit-execution-test-profile", "lumin-engine/audit-store-test-profile", "lumin-model/audit-store-test-profile", "lumin-protocol/audit-store-test-profile"]
 audit-execution-profile-probe = []
 audit-execution-test-profile = [
     "lumin-engine/audit-execution-test-profile",
@@ -33,6 +34,11 @@ path = "src/main.rs"
 [[test]]
 name = "audit_diagnostic"
 path = "tests/audit_diagnostic.rs"
+required-features = ["audit-execution-profile-probe"]
+
+[[test]]
+name = "audit_store_diagnostic"
+path = "tests/audit_store_diagnostic.rs"
 required-features = ["audit-execution-profile-probe"]
 
 [[test]]

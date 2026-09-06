@@ -8,6 +8,7 @@
       "path": "crates/application/cli",
       "features": {
         "audit-execution-profile-probe": [],
+        "audit-store-test-profile": ["audit-execution-test-profile", "lumin-engine/audit-store-test-profile", "lumin-model/audit-store-test-profile", "lumin-protocol/audit-store-test-profile"],
         "audit-execution-test-profile": [
           "lumin-engine/audit-execution-test-profile",
           "lumin-model/audit-execution-test-profile",
@@ -253,6 +254,7 @@
       "class": "production",
       "path": "crates/application/engine",
       "features": {
+        "audit-store-test-profile": ["audit-execution-test-profile", "lumin-model/audit-store-test-profile", "lumin-store/audit-store-test-profile"],
         "audit-execution-test-profile": ["lumin-model/audit-execution-test-profile"],
         "cache-cleanup-test-fault": [
           "lumin-store/cache-cleanup-test-fault"
@@ -903,7 +905,7 @@
       "name": "lumin-model",
       "class": "production",
       "path": "crates/foundation/model",
-      "features": {"audit-execution-test-profile": []},
+      "features": {"audit-execution-test-profile": [], "audit-store-test-profile": ["audit-execution-test-profile"]},
       "dependencies": [
         {
           "origin": "workspace-inherited",
@@ -966,6 +968,7 @@
       "class": "production",
       "path": "crates/application/protocol",
       "features": {
+        "audit-store-test-profile": ["audit-execution-test-profile", "lumin-model/audit-store-test-profile"],
         "audit-execution-test-profile": ["lumin-model/audit-execution-test-profile"],
         "collection-ordering-test-perturb": []
       },
@@ -1183,6 +1186,7 @@
       "class": "production",
       "path": "crates/application/store",
       "features": {
+        "audit-store-test-profile": ["lumin-model/audit-store-test-profile"],
         "cache-cleanup-test-fault": [],
         "collection-ordering-test-perturb": [],
         "lifecycle-migration-test-fault": [],
@@ -1453,7 +1457,7 @@
           "requirement": null,
           "optional": false,
           "defaultFeatures": true,
-          "features": ["audit-execution-test-profile"],
+          "features": ["audit-store-test-profile"],
           "sourceKind": "workspace",
           "resolution": {
             "kind": "workspace",

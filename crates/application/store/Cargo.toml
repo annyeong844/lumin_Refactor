@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+audit-store-test-profile = ["lumin-model/audit-store-test-profile"]
 cache-cleanup-test-fault = []
 collection-ordering-test-perturb = []
 lifecycle-migration-test-fault = []

@@ -68,6 +68,18 @@ AUDIT_DIAGNOSTIC_COMMANDS = frozenset(
     }
 )
 
+# W3 is a distinct target/command binding, not a broader W2 exception.
+AUDIT_STORE_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-store-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-store-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-store-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
 
 class ProvenanceError(RuntimeError):
     """One owned dependency-admission failure."""
@@ -219,7 +231,9 @@ def validate_environment(
             raise ProvenanceError(f"GitHub runner temp is redirected or unsafe: {runner}")
         expected_home = runner / "lumin-cargo-home"
         diagnostic = plan is not None and plan.command in AUDIT_DIAGNOSTIC_COMMANDS
+        store_diagnostic = plan is not None and plan.command in AUDIT_STORE_DIAGNOSTIC_COMMANDS
         expected_target = runner / (
+            "lumin-audit-store-diagnostic-target" if store_diagnostic else
             "lumin-audit-diagnostic-target" if diagnostic else "lumin-target"
         )
         if not _same_path(cargo_home, expected_home):

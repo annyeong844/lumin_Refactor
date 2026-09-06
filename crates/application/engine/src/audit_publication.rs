@@ -23,7 +23,7 @@ pub(super) fn publish(
     let evidence = lumin_store::prepare_run_evidence(&snapshot.evidence)?;
     audit_phase_end!(profile, EvidencePrepare);
     audit_phase_begin!(profile, StorePublish);
-    let result = store.publish_run_with_preflight(attempt, |reserved_identities| {
+    let preflight = |reserved_identities: &BTreeSet<PhysicalFileIdentity>| {
         audit_phase_begin!(profile, FinalInputs);
         validate_snapshot(
             root,
@@ -33,7 +33,20 @@ pub(super) fn publish(
         )?;
         audit_phase_end!(profile, FinalInputs);
         Ok(evidence)
-    });
+    };
+    #[cfg(not(feature = "audit-store-test-profile"))]
+    let result = store.publish_run_with_preflight(attempt, preflight);
+    #[cfg(feature = "audit-store-test-profile")]
+    let result = {
+        let (result, timings) = store.publish_run_observed(attempt, preflight);
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.store(
+                lumin_model::audit_store_diagnostic::AuditStorePhase::StorePublish,
+                timings,
+            );
+        }
+        result
+    };
     audit_phase_end!(profile, StorePublish);
     result
 }

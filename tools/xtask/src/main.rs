@@ -71,7 +71,7 @@ fn main() -> ExitCode {
                 "usage: lumin-xtask <command>\n\n\
                  commands:\n  \
                  architecture-check\n  \
-                 benchmark foundation [--diagnose-cold-audit]\n  \
+                 benchmark foundation [--diagnose-cold-audit|--diagnose-cold-audit-store]\n  \
                  generated-tables --write\n  \
                  path-codec --write\n  \
                  package-check stage <windows-x64|linux-x64>|windows-x64|linux-x64|skills\n  \

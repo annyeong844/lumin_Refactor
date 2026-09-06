@@ -22,7 +22,10 @@ const MAX_PEAK_RSS_BYTES: u64 = 536_870_912;
 
 pub(crate) fn run(arguments: &[String]) -> ExitCode {
     if arguments == ["foundation", "--diagnose-cold-audit"] {
-        return diagnostic::run();
+        return diagnostic::run(diagnostic::Version::Execution);
+    }
+    if arguments == ["foundation", "--diagnose-cold-audit-store"] {
+        return diagnostic::run(diagnostic::Version::Store);
     }
     if arguments != ["foundation"] {
         eprintln!("[TOOL ERROR] usage: lumin-xtask benchmark foundation");

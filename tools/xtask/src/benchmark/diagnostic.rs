@@ -1,4 +1,4 @@
-//! W2 cold-only comparison; never a performance-budget verdict.
+//! Versioned W2/W3 cold-only comparison; never a performance-budget verdict.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,27 @@ use lumin_protocol::audit_diagnostic::{AuditDiagnosticDto, decode};
 use serde_json::Value;
 
 use super::{archive, fixture, measurement, truth};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Version {
+    Execution,
+    Store,
+}
+
+impl Version {
+    fn feature(self) -> &'static str {
+        match self {
+            Self::Execution => "audit-execution-test-profile",
+            Self::Store => "audit-store-test-profile",
+        }
+    }
+    fn report_schema(self) -> &'static str {
+        match self {
+            Self::Execution => "lumin.phase1-cold-audit-diagnostic.v1",
+            Self::Store => "lumin.phase1-cold-audit-diagnostic.v2",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Cell {
@@ -56,8 +77,8 @@ fn cells() -> Vec<Cell> {
     cells
 }
 
-pub(super) fn run() -> ExitCode {
-    match diagnose_cold_audit() {
+pub(super) fn run(version: Version) -> ExitCode {
+    match diagnose_cold_audit(version) {
         Ok(report) => {
             match serde_json::to_string_pretty(&report) {
                 Ok(report) => println!("{report}"),
@@ -75,7 +96,7 @@ pub(super) fn run() -> ExitCode {
     }
 }
 
-fn diagnose_cold_audit() -> Result<Value, String> {
+fn diagnose_cold_audit(version: Version) -> Result<Value, String> {
     let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
     let python = measurement::require_python()?;
     let script = workspace.join("tools/xtask/benchmark/measure-process.py");
@@ -114,7 +135,8 @@ fn diagnose_cold_audit() -> Result<Value, String> {
         if control_before == diagnostic_before {
             return Err("control and diagnostic are the same payload".to_owned());
         }
-        let provenance = validate_build_record(&workspace, &control_before, &diagnostic_before)?;
+        let provenance =
+            validate_build_record(&workspace, &control_before, &diagnostic_before, version)?;
         archive::write_json(&archive.root.join("builds.json"), &provenance)?;
         archive::write_bytes(
             &archive.root.join("control-package.json"),
@@ -187,7 +209,8 @@ fn diagnose_cold_audit() -> Result<Value, String> {
             let frame_bytes =
                 fs::read(capture.join("stderr")).map_err(|error| error.to_string())?;
             let frame = if cell.diagnostic {
-                Some(validate_frame(
+                Some(validate_versioned_frame(
+                    version,
                     &frame_bytes,
                     &measured.raw,
                     &measured.response,
@@ -227,8 +250,8 @@ fn diagnose_cold_audit() -> Result<Value, String> {
             archive::write_json(&capture.join("semantic-truth.json"), &semantic)?;
             let command_elapsed = frame
                 .as_ref()
-                .and_then(|frame| frame.phases.first())
-                .and_then(|phase| phase.elapsed_nanoseconds);
+                .and_then(|frame| frame.pointer("/phases/0/elapsedNanoseconds"))
+                .and_then(Value::as_u64);
             let residual = command_elapsed
                 .map(|elapsed| {
                     measured
@@ -251,9 +274,12 @@ fn diagnose_cold_audit() -> Result<Value, String> {
             samples.push(sample);
             archive.complete()?;
         }
-        let summary = summarize(&samples)?;
+        let mut summary = summarize(&samples)?;
+        if version == Version::Store {
+            summary["roundDifferencesNanoseconds"] = round_differences(&samples)?;
+        }
         Ok(serde_json::json!({
-            "schemaVersion":"lumin.phase1-cold-audit-diagnostic.v1", "status":"DIAGNOSTIC_ONLY",
+            "schemaVersion":version.report_schema(), "status":"DIAGNOSTIC_ONLY",
             "numericBudgetVerdict":null, "summary":summary,
             "builds":provenance, "host":host.details, "environment":host.classification,
             "toolchain":measurement::python_identity(&python, &script, &host.details)?,
@@ -310,6 +336,7 @@ fn validate_build_record(
     workspace: &Path,
     control: &str,
     diagnostic: &str,
+    version: Version,
 ) -> Result<Value, String> {
     let status = Command::new("git")
         .args(["status", "--porcelain=v1", "-z"])
@@ -338,7 +365,7 @@ fn validate_build_record(
         || record["controlSha256"] != control
         || record["diagnosticSha256"] != diagnostic
         || record["controlFeatures"] != serde_json::json!([])
-        || record["diagnosticFeatures"] != serde_json::json!(["audit-execution-test-profile"])
+        || record["diagnosticFeatures"] != serde_json::json!([version.feature()])
     {
         return Err(
             "build record contradicts source, lockfile, payloads, or isolated features".to_owned(),
@@ -359,7 +386,95 @@ fn validate_build_record(
             "diagnostic build record does not use the pinned host target/toolchain".to_owned(),
         );
     }
+    if version == Version::Store {
+        let policy: Value = serde_json::from_slice(
+            &fs::read(workspace.join("tools/xtask/dependency-surface-policy.v2.json"))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let closure = store_feature_closure(&policy)?;
+        if closure != expected_store_feature_closure()
+            || record["diagnosticFeatureClosure"] != closure
+        {
+            return Err("unreviewed or unbound diagnostic feature closure".to_owned());
+        }
+        let prefix = if cfg!(windows) {
+            "cargo build -p lumin-cli --release".to_owned()
+        } else {
+            format!("cargo build -p lumin-cli --release --target {target}")
+        };
+        let expected_diagnostic = format!("{prefix} --features {} --locked", version.feature());
+        let expected_control = format!("{prefix} --locked");
+        for (key, expected) in [
+            ("diagnosticCommand", expected_diagnostic.as_str()),
+            ("controlCommand", expected_control.as_str()),
+        ] {
+            let command = record[key].as_str().ok_or("missing build command")?;
+            if command != expected && command != format!("{expected} -j1") {
+                return Err("diagnostic build command enables an unreviewed argument".to_owned());
+            }
+        }
+    }
     Ok(record)
+}
+
+fn expected_store_feature_closure() -> Value {
+    serde_json::json!({
+        "lumin-cli":["audit-execution-test-profile","audit-store-test-profile"],
+        "lumin-engine":["audit-execution-test-profile","audit-store-test-profile"],
+        "lumin-model":["audit-execution-test-profile","audit-store-test-profile"],
+        "lumin-protocol":["audit-execution-test-profile","audit-store-test-profile"],
+        "lumin-store":["audit-store-test-profile"],
+    })
+}
+
+// The source-provenance guard binds this feature graph to Cargo's resolved
+// workspace declarations before building. Resolve its exact requested closure;
+// an extra edge is a failure, not permission granted by a build-record string.
+fn store_feature_closure(policy: &Value) -> Result<Value, String> {
+    let members = policy["members"]
+        .as_array()
+        .ok_or("missing policy members")?;
+    let mut pending = vec![(
+        "lumin-cli".to_owned(),
+        "audit-store-test-profile".to_owned(),
+    )];
+    let mut closure = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    while let Some((package, feature)) = pending.pop() {
+        if !closure
+            .entry(package.clone())
+            .or_default()
+            .insert(feature.clone())
+        {
+            continue;
+        }
+        let member = members
+            .iter()
+            .find(|member| member["name"] == package)
+            .ok_or("unknown diagnostic feature owner")?;
+        let implications = member["features"][&feature]
+            .as_array()
+            .ok_or("unknown diagnostic feature")?;
+        for edge in implications {
+            let edge = edge.as_str().ok_or("invalid diagnostic feature edge")?;
+            if let Some((alias, feature)) = edge.split_once('/') {
+                let dependencies = member["dependencies"]
+                    .as_array()
+                    .ok_or("missing dependencies")?;
+                let dependency = dependencies
+                    .iter()
+                    .find(|dep| dep["alias"] == alias && dep["kind"] == "normal")
+                    .ok_or("feature does not belong to a normal dependency")?;
+                let owner = dependency["package"]
+                    .as_str()
+                    .ok_or("missing feature dependency owner")?;
+                pending.push((owner.to_owned(), feature.to_owned()));
+            } else {
+                pending.push((package.clone(), edge.to_owned()));
+            }
+        }
+    }
+    serde_json::to_value(closure).map_err(|error| error.to_string())
 }
 
 fn build_identity(binary: &Path, root: &Path, capture: &Path) -> Result<String, String> {
@@ -377,6 +492,25 @@ fn build_identity(binary: &Path, root: &Path, capture: &Path) -> Result<String, 
         .ok_or_else(|| "same-binary capabilities omitted build identity".to_owned())
 }
 
+fn validate_versioned_frame(
+    version: Version,
+    bytes: &[u8],
+    observer: &Value,
+    stdout: &Value,
+    build: &str,
+    jobs: Option<usize>,
+) -> Result<Value, String> {
+    match version {
+        Version::Execution => {
+            serde_json::to_value(validate_frame(bytes, observer, stdout, build, jobs)?)
+        }
+        Version::Store => {
+            serde_json::to_value(validate_store_frame(bytes, observer, stdout, build, jobs)?)
+        }
+    }
+    .map_err(|error| error.to_string())
+}
+
 fn validate_frame(
     bytes: &[u8],
     observer: &Value,
@@ -385,6 +519,32 @@ fn validate_frame(
     jobs: Option<usize>,
 ) -> Result<AuditDiagnosticDto, String> {
     let frame = decode(bytes)?;
+    validate_frame_binding(&frame, observer, stdout, build, jobs)?;
+    Ok(frame)
+}
+
+fn validate_store_frame(
+    bytes: &[u8],
+    observer: &Value,
+    stdout: &Value,
+    build: &str,
+    jobs: Option<usize>,
+) -> Result<lumin_protocol::audit_store_diagnostic::AuditStoreDiagnosticDto, String> {
+    let frame = lumin_protocol::audit_store_diagnostic::decode(bytes)?;
+    validate_frame_binding(&frame.execution(), observer, stdout, build, jobs)?;
+    if frame.store_phases.iter().any(|phase| phase.calls != 1) {
+        return Err("fresh cold repository omitted store/bootstrap work".to_owned());
+    }
+    Ok(frame)
+}
+
+fn validate_frame_binding(
+    frame: &AuditDiagnosticDto,
+    observer: &Value,
+    stdout: &Value,
+    build: &str,
+    jobs: Option<usize>,
+) -> Result<(), String> {
     if observer["schemaVersion"] != "lumin.phase1-process-measurement.v2"
         || observer["exitCode"] != 0
         || observer["analysisChildPids"] != serde_json::json!([])
@@ -401,7 +561,7 @@ fn validate_frame(
                 .to_owned(),
         );
     }
-    Ok(frame)
+    Ok(())
 }
 
 fn summarize(samples: &[Value]) -> Result<Value, String> {
@@ -458,5 +618,40 @@ fn summarize(samples: &[Value]) -> Result<Value, String> {
     }))
 }
 
+fn round_differences(samples: &[Value]) -> Result<Value, String> {
+    let mut rounds = Vec::new();
+    for round in 1..=3 {
+        for jobs in [Some(1), None] {
+            let mut elapsed = [0; 2];
+            for (index, kind) in ["control", "diagnostic"].into_iter().enumerate() {
+                let mut matches = samples.iter().filter(|sample| {
+                    sample["round"] == round
+                        && sample["requestedJobs"] == serde_json::json!(jobs)
+                        && sample["binaryKind"] == kind
+                        && sample["measured"] == true
+                });
+                let sample = matches.next().ok_or("missing round comparison cell")?;
+                if matches.next().is_some() {
+                    return Err("duplicated round comparison cell".to_owned());
+                }
+                elapsed[index] = sample
+                    .pointer("/process/elapsedNanoseconds")
+                    .and_then(Value::as_u64)
+                    .filter(|elapsed| *elapsed > 0)
+                    .ok_or("invalid round comparison timing")?;
+            }
+            rounds.push(serde_json::json!({
+                "round":round, "requestedJobs":jobs,
+                "controlNanoseconds":elapsed[0], "diagnosticNanoseconds":elapsed[1],
+                "diagnosticMinusControl":i128::from(elapsed[1]) - i128::from(elapsed[0]),
+            }));
+        }
+    }
+    Ok(Value::Array(rounds))
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod store_tests;

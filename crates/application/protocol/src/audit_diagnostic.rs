@@ -31,6 +31,13 @@ pub struct AuditPhaseDto {
 }
 
 pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
+    let dto = project(value)?;
+    let mut bytes = serde_json::to_string(&dto).map_err(|error| error.to_string())?;
+    bytes.push('\n');
+    Ok(bytes)
+}
+
+pub(super) fn project(value: &AuditExecutionDiagnostic) -> Result<AuditDiagnosticDto, String> {
     let observations = if value.parallelism_observation_error.is_some() {
         value.pool.timings.observations()?
     } else {
@@ -45,7 +52,7 @@ pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
             self_nanoseconds: phase.self_nanoseconds,
         })
         .collect();
-    let dto = AuditDiagnosticDto {
+    Ok(AuditDiagnosticDto {
         schema_version: SCHEMA.to_owned(),
         diagnostic_only: true,
         build_id: value.build_id.clone(),
@@ -61,10 +68,7 @@ pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
             .configured_worker_stack_bytes
             .ok_or("missing worker stack policy")?,
         phases,
-    };
-    let mut bytes = serde_json::to_string(&dto).map_err(|error| error.to_string())?;
-    bytes.push('\n');
-    Ok(bytes)
+    })
 }
 
 /// Struct decoding rejects duplicate keys at every level. Canonical re-encoding also
@@ -81,7 +85,7 @@ pub fn decode(bytes: &[u8]) -> Result<AuditDiagnosticDto, String> {
     Ok(dto)
 }
 
-fn validate_phases(dto: &AuditDiagnosticDto) -> Result<(), String> {
+pub(super) fn validate_phases(dto: &AuditDiagnosticDto) -> Result<(), String> {
     use lumin_model::audit_diagnostic::{AuditPhase, AuditTimings};
     if dto.phases.len() != AuditPhase::ALL.len() {
         return Err("incomplete phase inventory".to_owned());
