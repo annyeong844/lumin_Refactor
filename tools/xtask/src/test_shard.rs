@@ -9,8 +9,16 @@ use std::process::{Command, ExitCode};
 
 const CLI_TEST_DIRECTORY: &str = "crates/application/cli/tests";
 const STORE_PACKAGE: &str = "lumin-store";
-const STORE_LIB_TEST_MODULES: &[&str] = &["cache", "gate", "namespace", "retention"];
+const STORE_LIB_TEST_MODULES: &[&str] = &[
+    "cache",
+    "gate",
+    "namespace",
+    "retention",
+    "evidence_store_tests",
+];
 const FEATURE_GATED_TARGETS: &[&str] = &[
+    "audit_diagnostic",
+    "audit_store_diagnostic",
     "cache_cleanup_publication_race",
     "lifecycle_operation_idempotency",
     "lifecycle_store_migration",
@@ -446,6 +454,7 @@ mod tests {
             "gate::tests::reservation: test\n",
             "namespace::tests::binding: test\n",
             "retention::tests::planning: test\n",
+            "evidence_store_tests::chunked_round_trip: test\n",
         );
         assert_eq!(
             store_lib_test_modules(listing)?,
@@ -456,6 +465,12 @@ mod tests {
         );
         assert!(store_lib_test_modules(&format!("{listing}other::tests::new: test\n")).is_err());
         assert!(store_lib_test_modules("top_level_test: test\n").is_err());
+        assert!(
+            store_lib_test_modules(
+                &listing.replace("evidence_store_tests::chunked_round_trip: test\n", "")
+            )
+            .is_err()
+        );
         assert!(
             store_lib_test_modules(&listing.replace(
                 "namespace::tests::binding",

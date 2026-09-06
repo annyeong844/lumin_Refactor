@@ -7,6 +7,7 @@ use lumin_inventory::{
 };
 use lumin_model::{ConfigAbsenceParent, PhysicalFileIdentity, RepoPath};
 use lumin_store::{AttemptSession, PublishedRun, RepositoryStore, StoreError};
+use rayon::prelude::*;
 
 pub(super) fn publish(
     store: &RepositoryStore,
@@ -14,15 +15,40 @@ pub(super) fn publish(
     root: &Path,
     reserved_state_lookup: &ReservedStateIdentityLookup,
     snapshot: &AnalysisSnapshot,
+    #[cfg(feature = "audit-execution-test-profile")] mut profile: Option<
+        &mut super::audit_profile::AuditProfiler,
+    >,
 ) -> Result<PublishedRun, StoreError> {
-    store.publish_run(attempt, &snapshot.evidence, |reserved_identities| {
+    audit_phase_begin!(profile, EvidencePrepare);
+    let evidence = lumin_store::prepare_run_evidence(&snapshot.evidence)?;
+    audit_phase_end!(profile, EvidencePrepare);
+    audit_phase_begin!(profile, StorePublish);
+    let preflight = |reserved_identities: &BTreeSet<PhysicalFileIdentity>| {
+        audit_phase_begin!(profile, FinalInputs);
         validate_snapshot(
             root,
             &snapshot.inputs,
             reserved_state_lookup,
             reserved_identities,
-        )
-    })
+        )?;
+        audit_phase_end!(profile, FinalInputs);
+        Ok(evidence)
+    };
+    #[cfg(not(feature = "audit-store-test-profile"))]
+    let result = store.publish_run_with_preflight(attempt, preflight);
+    #[cfg(feature = "audit-store-test-profile")]
+    let result = {
+        let (result, timings) = store.publish_run_observed(attempt, preflight);
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.store(
+                lumin_model::audit_store_diagnostic::AuditStorePhase::StorePublish,
+                timings,
+            );
+        }
+        result
+    };
+    audit_phase_end!(profile, StorePublish);
+    result
 }
 
 fn validate_snapshot(
@@ -32,13 +58,20 @@ fn validate_snapshot(
     reserved_identities: &BTreeSet<PhysicalFileIdentity>,
 ) -> Result<(), StoreError> {
     let final_lookup = reserved_state_lookup.for_final_validation(reserved_identities);
-    for input in inputs {
-        if let Some(sha256) = &input.physical_redirect_sha256 {
-            validate_redirect_path(root, &input.path, sha256, reserved_identities)?;
-        }
-        if input.state != SemanticInputState::PathRedirect {
-            validate_input(root, input, &final_lookup)?;
-        }
+    let validations = inputs
+        .par_iter()
+        .map(|input| {
+            if let Some(sha256) = &input.physical_redirect_sha256 {
+                validate_redirect_path(root, &input.path, sha256, reserved_identities)?;
+            }
+            if input.state != SemanticInputState::PathRedirect {
+                validate_input(root, input, &final_lookup)?;
+            }
+            Ok(())
+        })
+        .collect::<Vec<Result<(), StoreError>>>();
+    for validation in validations {
+        validation?;
     }
     Ok(())
 }
@@ -162,6 +195,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         ) {
             Err(error) => error,
             Ok(_) => return Err("a late reserved-state alias published audit evidence".into()),
@@ -228,6 +263,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         ) {
             Err(error) => error,
             Ok(_) => return Err("an in-place config rewrite published stale audit evidence".into()),
@@ -279,6 +316,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         ) {
             Err(error) => error,
             Ok(_) => return Err("a newly created config published stale audit evidence".into()),
@@ -330,6 +369,8 @@ mod tests {
             &admission.canonical_root,
             &reserved_state_lookup,
             &capture.snapshot,
+            #[cfg(feature = "audit-execution-test-profile")]
+            None,
         )?;
         Ok(())
     }

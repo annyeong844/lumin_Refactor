@@ -232,22 +232,29 @@ pub(super) fn expand_write_domain(
     }
 
     let mut groups = BTreeMap::<PhysicalFileIdentity, BTreeSet<RepoPath>>::new();
-    for seed in seeds {
-        match lumin_inventory::physical_alias_write_closure(root, &seed, &semantic_paths) {
-            Ok(closure) if closure.members.is_empty() => signals.push(unsupported_path(
-                RepoPathProjection::from(&seed),
-                lumin_evidence::DeclaredPathUnsupportedReason::NotAnalyzedSource,
-            )),
-            Ok(closure) => {
+    match lumin_inventory::physical_alias_write_closures(
+        root,
+        &seeds.iter().cloned().collect::<Vec<_>>(),
+        &semantic_paths,
+    ) {
+        Ok(closures) => {
+            for (seed, closure) in closures {
+                if closure.members.is_empty() {
+                    signals.push(unsupported_path(
+                        RepoPathProjection::from(&seed),
+                        lumin_evidence::DeclaredPathUnsupportedReason::NotAnalyzedSource,
+                    ));
+                    continue;
+                }
                 groups
                     .entry(closure.physical_identity)
                     .or_default()
                     .extend(closure.members);
             }
-            Err(error) => signals.push(GateSignal::AnalysisFailed {
-                detail: error.to_string(),
-            }),
         }
+        Err(error) => signals.push(GateSignal::AnalysisFailed {
+            detail: error.to_string(),
+        }),
     }
     for member in groups.values().flatten() {
         match lumin_inventory::inspect_write_target(root, member) {
@@ -323,6 +330,7 @@ pub(super) struct WriteDomainObservation {
     pub(super) failures: Vec<String>,
 }
 
+#[cfg(test)]
 pub(super) fn observe_write_domain(
     root: &Path,
     lease_paths: &[WriteLease],
@@ -395,22 +403,20 @@ pub(super) fn observe_write_domain(
     }
 
     let mut groups = BTreeMap::<PhysicalFileIdentity, BTreeSet<RepoPath>>::new();
-    for seed in seeds {
-        match lumin_inventory::physical_alias_write_closure(root, &seed, &semantic_paths) {
-            Ok(closure) => {
+    match lumin_inventory::physical_alias_write_closures(
+        root,
+        &seeds.iter().cloned().collect::<Vec<_>>(),
+        &semantic_paths,
+    ) {
+        Ok(closures) => {
+            for closure in closures.into_values() {
                 groups
                     .entry(closure.physical_identity)
                     .or_default()
                     .extend(closure.members);
             }
-            Err(error) => classify_disappeared_domain_path(
-                root,
-                &seed,
-                error.to_string(),
-                &mut drift_paths,
-                &mut failures,
-            ),
         }
+        Err(error) => failures.push(error.to_string()),
     }
     for member in groups.values().flatten() {
         match lumin_inventory::inspect_write_target(root, member) {
@@ -435,6 +441,161 @@ pub(super) fn observe_write_domain(
     WriteDomainObservation {
         leases,
         alias_closures,
+        drift_paths,
+        failures,
+    }
+}
+
+/// Revalidates a write domain from a complete, freshly authenticated semantic-input snapshot.
+///
+/// Capture has already opened every source and retained its physical identity. Building the
+/// candidate alias groups from that snapshot lets final validation reopen only the leased paths
+/// and their actual aliases. A path changed after capture is still observed directly and becomes
+/// fail-closed drift.
+pub(super) fn observe_write_domain_from_semantic_inputs(
+    root: &Path,
+    lease_paths: &[WriteLease],
+    current_inputs: &[SemanticInputRecord],
+    unavailable_targets: &BTreeSet<RepoPath>,
+) -> WriteDomainObservation {
+    let mut semantic_identities = BTreeMap::<RepoPath, PhysicalFileIdentity>::new();
+    let mut leases = Vec::new();
+    let mut seed_identities = BTreeSet::new();
+    let mut failures = Vec::new();
+    let mut drift_paths = Vec::new();
+
+    for input in current_inputs {
+        if !matches!(
+            input.state,
+            SemanticInputState::Source
+                | SemanticInputState::ConfigPresent
+                | SemanticInputState::CapabilityTarget
+        ) {
+            continue;
+        }
+        let Some(identity) = &input.physical_identity else {
+            continue;
+        };
+        let path = match RepoPath::from_canonical_bytes(&input.path.canonical) {
+            Ok(path) if RepoPathProjection::from(&path) == input.path => path,
+            Ok(_) => {
+                failures.push(format!(
+                    "captured semantic path projection round-trip failed for {}",
+                    input.path.display
+                ));
+                continue;
+            }
+            Err(error) => {
+                failures.push(format!(
+                    "captured semantic path is not canonical: {} ({error})",
+                    input.path.display
+                ));
+                continue;
+            }
+        };
+        if semantic_identities
+            .insert(path.clone(), identity.clone())
+            .is_some_and(|prior| prior != *identity)
+        {
+            failures.push(format!(
+                "captured semantic path has conflicting physical identities: {}",
+                path.display_escaped()
+            ));
+        }
+    }
+
+    for expected in lease_paths {
+        let path = match RepoPath::from_canonical_bytes(&expected.path.canonical) {
+            Ok(path) if RepoPathProjection::from(&path) == expected.path => path,
+            Ok(_) => {
+                failures.push(format!(
+                    "stored write lease projection round-trip failed for {}",
+                    expected.path.display
+                ));
+                continue;
+            }
+            Err(error) => {
+                failures.push(format!(
+                    "stored write lease path is not canonical: {} ({error})",
+                    expected.path.display
+                ));
+                continue;
+            }
+        };
+        match lumin_inventory::inspect_write_target(root, &path) {
+            Ok(observation) => {
+                match observation.kind {
+                    WriteTargetKind::ExistingFile => {
+                        if (semantic_identities.contains_key(&observation.path)
+                            || !unavailable_targets.contains(&observation.path))
+                            && let Some(identity) = &observation.physical_identity
+                        {
+                            seed_identities.insert(identity.clone());
+                            if semantic_identities
+                                .get(&observation.path)
+                                .is_some_and(|captured| captured != identity)
+                            {
+                                drift_paths.push(RepoPathProjection::from(&observation.path));
+                            }
+                        }
+                    }
+                    WriteTargetKind::ExistingDirectory => {
+                        seed_identities.extend(
+                            semantic_identities
+                                .iter()
+                                .filter(|(candidate, _)| candidate.is_within(&observation.path))
+                                .map(|(_, identity)| identity.clone()),
+                        );
+                    }
+                    WriteTargetKind::NewFile => {}
+                }
+                leases.push(write_lease(&observation));
+            }
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+
+    let mut groups = seed_identities
+        .into_iter()
+        .map(|identity| (identity, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for (path, identity) in &semantic_identities {
+        if let Some(members) = groups.get_mut(identity) {
+            members.insert(path.clone());
+        }
+    }
+    for (identity, members) in &groups {
+        for member in members {
+            match lumin_inventory::inspect_write_target(root, member) {
+                Ok(observation)
+                    if observation.kind == WriteTargetKind::ExistingFile
+                        && observation.physical_identity.as_ref() == Some(identity) =>
+                {
+                    leases.push(write_lease(&observation));
+                }
+                Ok(observation) => {
+                    drift_paths.push(RepoPathProjection::from(&observation.path));
+                }
+                Err(error) => classify_disappeared_domain_path(
+                    root,
+                    member,
+                    error.to_string(),
+                    &mut drift_paths,
+                    &mut failures,
+                ),
+            }
+        }
+    }
+
+    failures.sort();
+    failures.dedup();
+    drift_paths.sort();
+    drift_paths.dedup();
+    leases.sort();
+    leases.dedup();
+    WriteDomainObservation {
+        leases,
+        alias_closures: normalized_alias_closures(alias_closure_records(groups)),
         drift_paths,
         failures,
     }
@@ -535,17 +696,10 @@ pub(super) fn close_alias_topology(
     Vec<GateSignal>,
 ) {
     let mut signals = validate_stable_lease_parents(root, &gate.leased_write_set);
-    let semantic_paths = match captured_input_physical_paths(&capture.snapshot.inputs) {
-        Ok(paths) => paths,
-        Err(signal) => {
-            signals.push(signal);
-            return (Vec::new(), Vec::new(), signals);
-        }
-    };
-    let observation = observe_write_domain(
+    let observation = observe_write_domain_from_semantic_inputs(
         root,
         &gate.leased_write_set,
-        &semantic_paths,
+        &capture.snapshot.inputs,
         &BTreeSet::new(),
     );
     if !observation.failures.is_empty() || !observation.drift_paths.is_empty() {
@@ -906,6 +1060,69 @@ mod tests {
         };
         assert!(paths.contains(&RepoPathProjection::from(&source)));
         assert!(paths.contains(&RepoPathProjection::from(&planned)));
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_input_alias_index_matches_full_observation_and_detects_late_drift()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("src"))?;
+        let source = RepoPath::from_portable("src/main.ts")?;
+        let alias = RepoPath::from_portable("src/alias.ts")?;
+        std::fs::write(root.path().join("src/main.ts"), "export const main = 1;\n")?;
+        std::fs::hard_link(
+            root.path().join("src/main.ts"),
+            root.path().join("src/alias.ts"),
+        )?;
+        let expected_lease = write_lease(&lumin_inventory::inspect_write_target(
+            root.path(),
+            &source,
+        )?);
+        let inputs = [&source, &alias]
+            .into_iter()
+            .map(|path| {
+                let observation = lumin_inventory::inspect_write_target(root.path(), path)?;
+                Ok(SemanticInputRecord {
+                    path: RepoPathProjection::from(path),
+                    state: SemanticInputState::Source,
+                    payload_sha256: Some("0".repeat(64)),
+                    physical_identity: observation.physical_identity,
+                    absence_parent: None,
+                    physical_redirect_sha256: None,
+                })
+            })
+            .collect::<Result<Vec<_>, WriteTargetError>>()?;
+
+        let full = observe_write_domain(
+            root.path(),
+            std::slice::from_ref(&expected_lease),
+            &[source.clone(), alias.clone()],
+            &BTreeSet::new(),
+        );
+        let indexed = observe_write_domain_from_semantic_inputs(
+            root.path(),
+            std::slice::from_ref(&expected_lease),
+            &inputs,
+            &BTreeSet::new(),
+        );
+        assert_eq!(indexed.leases, full.leases);
+        assert_eq!(indexed.alias_closures, full.alias_closures);
+        assert_eq!(indexed.drift_paths, full.drift_paths);
+        assert_eq!(indexed.failures, full.failures);
+
+        std::fs::remove_file(root.path().join("src/alias.ts"))?;
+        std::fs::write(
+            root.path().join("src/alias.ts"),
+            "export const other = 2;\n",
+        )?;
+        let drifted = observe_write_domain_from_semantic_inputs(
+            root.path(),
+            &[expected_lease],
+            &inputs,
+            &BTreeSet::new(),
+        );
+        assert_eq!(drifted.drift_paths, [RepoPathProjection::from(&alias)]);
         Ok(())
     }
 

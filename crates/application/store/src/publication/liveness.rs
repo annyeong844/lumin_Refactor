@@ -19,55 +19,85 @@ pub struct AttemptSession<'store> {
     lock_file: Option<namespace::HeldEntry>,
 }
 
-pub(super) fn begin(store: &RepositoryStore) -> Result<AttemptSession<'_>, StoreError> {
-    store.with_exclusive_lock(|guard| {
-        latest::ensure(store, guard)?;
-        recovery::recover_under_guard(store, guard)?;
+pub(super) fn begin<'store>(
+    store: &'store RepositoryStore,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
+) -> Result<AttemptSession<'store>, StoreError> {
+    store_profile_lock!(
+        store,
+        with_exclusive_lock,
+        true,
+        false,
+        profile,
+        AttemptEnter,
+        AttemptExit,
+        |guard| {
+            store_phase_begin!(profile, AttemptRecoverLatest);
+            latest::ensure(store, guard)?;
+            store_phase_end!(profile, AttemptRecoverLatest);
+            store_phase_begin!(profile, AttemptRecoverLeases);
+            recovery::recover_under_guard(store, guard)?;
+            store_phase_end!(profile, AttemptRecoverLeases);
 
-        let lease_nonce = nonce_hex()?;
-        let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
-        hit_before_allocation();
-        let allocation =
-            records::reserve(guard, lock_name.clone(), lease_nonce, std::process::id())?;
-        let lock_file = guard.create_state_file(&lock_name, "attempt process-liveness lock")?;
-        lock_file.file().try_lock_exclusive().map_err(io_error)?;
-        hit_after_lock_creation();
-        let lease = records::activate(guard, &lock_file, &allocation)?;
-        hit_after_allocation();
+            let lease_nonce = nonce_hex()?;
+            let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
+            hit_before_allocation();
+            store_phase_begin!(profile, AttemptReserve);
+            let allocation =
+                records::reserve(guard, lock_name.clone(), lease_nonce, std::process::id())?;
+            store_phase_end!(profile, AttemptReserve);
+            store_phase_begin!(profile, AttemptLock);
+            let lock_file = guard.create_state_file(&lock_name, "attempt process-liveness lock")?;
+            lock_file.file().try_lock_exclusive().map_err(io_error)?;
+            store_phase_end!(profile, AttemptLock);
+            hit_after_lock_creation();
+            store_phase_begin!(profile, AttemptActivate);
+            let lease = records::activate(guard, &lock_file, &allocation)?;
+            store_phase_end!(profile, AttemptActivate);
+            hit_after_allocation();
 
-        create_attempt_directory(store, guard, &lease.attempt_id, lease.generation)?;
-        let envelope = AttemptEnvelope {
-            schema_version: "lumin-attempt.v1".to_owned(),
-            attempt_id: lease.attempt_id.clone(),
-            sequence: lease.sequence,
-            state: AttemptStatus::Running,
-            started_unix_millis: unix_millis()?,
-            finished_unix_millis: None,
-            run_id: None,
-            failure: None,
-        };
-        let directory = guard.open_managed_child_directory(
-            ManagedStateParentKind::Attempts,
-            lease.attempt_id.as_str(),
-            "attempt directory",
-        )?;
-        files::write_json(
-            &attempt_path(store, &lease.attempt_id),
-            &directory,
-            "attempt envelope",
-            &envelope,
-        )?;
-        hit_after_running();
+            store_phase_begin!(profile, AttemptDirectory);
+            create_attempt_directory(store, guard, &lease.attempt_id, lease.generation)?;
+            store_phase_end!(profile, AttemptDirectory);
+            let envelope = AttemptEnvelope {
+                schema_version: "lumin-attempt.v1".to_owned(),
+                attempt_id: lease.attempt_id.clone(),
+                sequence: lease.sequence,
+                state: AttemptStatus::Running,
+                started_unix_millis: unix_millis()?,
+                finished_unix_millis: None,
+                run_id: None,
+                failure: None,
+            };
+            store_phase_begin!(profile, AttemptEnvelope);
+            let directory = guard.open_managed_child_directory(
+                ManagedStateParentKind::Attempts,
+                lease.attempt_id.as_str(),
+                "attempt directory",
+            )?;
+            files::write_json(
+                &attempt_path(store, &lease.attempt_id),
+                &directory,
+                "attempt envelope",
+                &envelope,
+            )?;
+            hit_after_running();
+            store_phase_end!(profile, AttemptEnvelope);
 
-        latest::publish_attempt(store, guard, &envelope, false)?;
-        hit_after_latest_running();
-        Ok(AttemptSession {
-            store,
-            generation: lease.generation,
-            lease,
-            lock_file: Some(lock_file),
-        })
-    })
+            store_phase_begin!(profile, AttemptLatest);
+            latest::publish_attempt(store, guard, &envelope, false)?;
+            store_phase_end!(profile, AttemptLatest);
+            hit_after_latest_running();
+            Ok(AttemptSession {
+                store,
+                generation: lease.generation,
+                lease,
+                lock_file: Some(lock_file),
+            })
+        }
+    )
 }
 
 pub(super) fn finish_failed(
@@ -98,11 +128,30 @@ pub(super) fn finish_failed(
     })
 }
 
-pub(super) fn recover(store: &RepositoryStore) -> Result<(), StoreError> {
-    store.with_exclusive_lock(|guard| {
-        latest::ensure(store, guard)?;
-        recovery::recover_under_guard(store, guard)
-    })
+pub(super) fn recover(
+    store: &RepositoryStore,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
+) -> Result<(), StoreError> {
+    store_profile_lock!(
+        store,
+        with_admission_exclusive_lock,
+        true,
+        true,
+        profile,
+        OpenRecoveryEnter,
+        OpenRecoveryExit,
+        |guard| {
+            store_phase_begin!(profile, OpenRecoveryLatest);
+            latest::ensure(store, guard)?;
+            store_phase_end!(profile, OpenRecoveryLatest);
+            store_phase_begin!(profile, OpenRecoveryLeases);
+            let result = recovery::recover_under_guard(store, guard);
+            store_phase_end!(profile, OpenRecoveryLeases);
+            result
+        }
+    )
 }
 
 pub(super) fn validate_snapshot(

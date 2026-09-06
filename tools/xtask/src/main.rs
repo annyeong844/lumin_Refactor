@@ -3,6 +3,7 @@
 //! Exit codes: 0 = pass, 1 = violations/failures found, 2 = tool/parse/metadata/registry error.
 
 mod architecture;
+mod benchmark;
 mod capability_availability;
 mod cargo_bootstrap;
 mod corpus;
@@ -21,6 +22,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(|s| s.as_str()) {
         Some("architecture-check") => architecture::run(),
+        Some("benchmark") => benchmark::run(&args[1..]),
         Some("corpus") => corpus::run(&args[1..]),
         Some("package-check") => package_check::run(&args[1..]),
         Some("ci-test-shard") => test_shard::run(&args[1..]),
@@ -69,6 +71,7 @@ fn main() -> ExitCode {
                 "usage: lumin-xtask <command>\n\n\
                  commands:\n  \
                  architecture-check\n  \
+                 benchmark foundation [--diagnose-cold-audit|--diagnose-cold-audit-store]\n  \
                  generated-tables --write\n  \
                  path-codec --write\n  \
                  package-check stage <windows-x64|linux-x64>|windows-x64|linux-x64|skills\n  \

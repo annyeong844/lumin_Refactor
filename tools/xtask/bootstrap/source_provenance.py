@@ -54,6 +54,31 @@ DEPENDENCY_TABLES = (
     ("build-dependencies", "build"),
     ("dev-dependencies", "development"),
 )
+# W2's reviewed diagnostic build/test/negative-check step owns this one
+# additional job-private target. Do not admit arbitrary runner-temp children
+# or infer isolation from a feature substring in an unrelated Cargo command.
+AUDIT_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-execution-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "--lib",
+         "--features", "audit-execution-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-execution-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
+# W3 is a distinct target/command binding, not a broader W2 exception.
+AUDIT_STORE_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-store-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-store-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-store-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
 
 
 class ProvenanceError(RuntimeError):
@@ -175,7 +200,10 @@ def _env_get(environment: Mapping[str, str], name: str) -> str | None:
     return matches[0][1] if matches else None
 
 
-def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) -> Path:
+def validate_environment(
+    environment: Mapping[str, str], root: Path, cwd: Path,
+    plan: CommandPlan | None = None,
+) -> Path:
     reject_environment_overrides(environment)
 
     raw_home = _env_get(environment, "CARGO_HOME")
@@ -202,7 +230,12 @@ def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) 
         if not _same_path(runner, runner.resolve(strict=False)) or _inside(runner, root):
             raise ProvenanceError(f"GitHub runner temp is redirected or unsafe: {runner}")
         expected_home = runner / "lumin-cargo-home"
-        expected_target = runner / "lumin-target"
+        diagnostic = plan is not None and plan.command in AUDIT_DIAGNOSTIC_COMMANDS
+        store_diagnostic = plan is not None and plan.command in AUDIT_STORE_DIAGNOSTIC_COMMANDS
+        expected_target = runner / (
+            "lumin-audit-store-diagnostic-target" if store_diagnostic else
+            "lumin-audit-diagnostic-target" if diagnostic else "lumin-target"
+        )
         if not _same_path(cargo_home, expected_home):
             raise ProvenanceError(
                 f"GitHub Cargo home must be job-private {expected_home}, got {cargo_home}"
@@ -213,6 +246,8 @@ def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) 
             raise ProvenanceError(
                 f"GitHub Cargo target must be job-private {expected_target}"
             )
+        if not _same_path(expected_target, expected_target.resolve(strict=False)):
+            raise ProvenanceError(f"GitHub Cargo target is redirected: {expected_target}")
     return cargo_home
 
 
@@ -486,7 +521,8 @@ def _declarations(
 
 
 def inspect_repository(
-    root: Path, environment: Mapping[str, str], cwd: Path
+    root: Path, environment: Mapping[str, str], cwd: Path,
+    plan: CommandPlan | None = None,
 ) -> Repository:
     root = _absolute(root)
     try:
@@ -498,7 +534,7 @@ def inspect_repository(
         raise ProvenanceError(
             f"guard must run from the unredirected repository root {physical_root}"
         )
-    cargo_home = validate_environment(environment, physical_root, physical_cwd)
+    cargo_home = validate_environment(environment, physical_root, physical_cwd, plan)
     reject_cargo_configuration(physical_root, cargo_home)
     root_manifest = _read_toml(physical_root / "Cargo.toml", physical_root, "root manifest")
     _unredirected_file(physical_root / "Cargo.lock", physical_root, "root lockfile")
@@ -1030,6 +1066,8 @@ def _target_applies(target: str | None, lane: str) -> bool:
         return True
     if target == "cfg(windows)":
         return lane == "x86_64-pc-windows-msvc"
+    if target == 'cfg(all(target_os = "linux", target_env = "musl"))':
+        return lane == "x86_64-unknown-linux-musl"
     raise ProvenanceError(f"unsupported target predicate in frozen policy: {target}")
 
 
@@ -1227,7 +1265,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         else:
             plan = validate_command(_parse_command(raw))
         pinned_python(os.environ, root)
-        repository = inspect_repository(root, os.environ, Path.cwd())
+        repository = inspect_repository(root, os.environ, Path.cwd(), plan)
         cargo, host = pinned_cargo(os.environ, root)
         child_environment = pinned_toolchain_environment(os.environ)
         if plan.resolving:

@@ -12,14 +12,15 @@ use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 use crate::{SEQUENCES, StoreError};
 
 use super::receipts::{
-    validate_gate_validation_receipts, validate_loaded_validation_receipt_catalog,
-    validate_stored_gate_validation_receipts, validate_stored_validation_receipt_catalog,
+    validate_loaded_validation_receipt_catalog, validate_stored_gate_validation_receipts,
+    validate_stored_validation_receipt_catalog,
 };
 use super::records::{read_record, transition_key};
 use super::{GATES, OPERATIONS, TRANSITIONS};
 
 pub(super) struct ValidatedGateCatalog {
     pub(super) gates: BTreeMap<String, GateRecord>,
+    pub(super) operations: BTreeMap<String, OperationRecord>,
     pub(super) transitions: BTreeMap<u64, WorktreeTransition>,
 }
 
@@ -189,24 +190,12 @@ pub(super) fn read_validated_gate(
     Ok(gate)
 }
 
-pub(super) fn read_validated_gates(
-    write: &WriteTransaction,
-) -> Result<Vec<GateRecord>, StoreError> {
-    let gates = read_gate_map_from_write(write)?;
-    for gate in gates.values() {
-        validate_stored_gate_validation_receipts(write, gate)?;
-    }
-    Ok(gates.into_values().collect())
-}
-
 pub(super) fn validate_stored_gate_catalog(
     write: &WriteTransaction,
 ) -> Result<ValidatedGateCatalog, StoreError> {
     let gates = read_gate_map_from_write(write)?;
-    for gate in gates.values() {
-        validate_stored_gate_validation_receipts(write, gate)?;
-    }
     let operations = read_operation_map_from_write(write)?;
+    validate_gate_operation_ownership(&gates, &operations)?;
     validate_stored_validation_receipt_catalog(write, &gates, &operations)?;
     let transitions = read_transition_map_from_write(write)?;
     validate_transition_catalog(&gates, &transitions)?;
@@ -218,17 +207,19 @@ pub(super) fn validate_stored_gate_catalog(
         read_sequence_from_write(write, "transition")?,
         read_sequence_from_write(write, super::records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY)?,
     )?;
-    Ok(ValidatedGateCatalog { gates, transitions })
+    Ok(ValidatedGateCatalog {
+        gates,
+        operations,
+        transitions,
+    })
 }
 
 pub(super) fn validate_loaded_gate_catalog(
     read: &ReadTransaction,
 ) -> Result<ValidatedGateCatalog, StoreError> {
     let gates = read_gate_map_from_read(read)?;
-    for gate in gates.values() {
-        validate_gate_validation_receipts(read, gate)?;
-    }
     let operations = read_operation_map_from_read(read)?;
+    validate_gate_operation_ownership(&gates, &operations)?;
     validate_loaded_validation_receipt_catalog(read, &gates, &operations)?;
     let transitions = read_transition_map_from_read(read)?;
     validate_transition_catalog(&gates, &transitions)?;
@@ -240,7 +231,40 @@ pub(super) fn validate_loaded_gate_catalog(
         read_sequence_from_read(read, "transition")?,
         read_sequence_from_read(read, super::records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY)?,
     )?;
-    Ok(ValidatedGateCatalog { gates, transitions })
+    Ok(ValidatedGateCatalog {
+        gates,
+        operations,
+        transitions,
+    })
+}
+
+fn validate_gate_operation_ownership(
+    gates: &BTreeMap<String, GateRecord>,
+    operations: &BTreeMap<String, OperationRecord>,
+) -> Result<(), StoreError> {
+    for gate in gates.values() {
+        validate_gate_record_shape(gate)?;
+        for revision in &gate.revisions {
+            let operation = operations
+                .get(revision.operation_id.as_str())
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {} revision {} lost its operation {}",
+                        gate.gate_id.as_str(),
+                        revision.revision,
+                        revision.operation_id.as_str()
+                    ))
+                })?;
+            if operation.gate_id != gate.gate_id {
+                return Err(StoreError::Integrity(format!(
+                    "gate {} revision {} is owned by another operation gate",
+                    gate.gate_id.as_str(),
+                    revision.revision
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_allocator_floors(

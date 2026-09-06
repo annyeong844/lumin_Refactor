@@ -1,0 +1,62 @@
+{
+  "host": {
+    "kernelRelease": "6.6.87.2-microsoft-standard-WSL2",
+    "machine": "x86_64",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "pythonVersion": "3.12.3",
+    "wsl": true
+  },
+  "mount": {
+    "filesystemType": "9p",
+    "mountOptions": [
+      "rw",
+      "noatime"
+    ],
+    "mountPoint": "/mnt/d",
+    "mountSource": "D:\\134",
+    "superOptions": [
+      "rw",
+      "aname=drvfs;path=D:\\;uid=1000;gid=1000;symlinkroot=/mnt/",
+      "cache=5",
+      "access=client",
+      "msize=65536",
+      "trans=fd",
+      "rfd=5",
+      "wfd=5"
+    ]
+  },
+  "results": {
+    "directoryHardLink": {
+      "errno": 1,
+      "errnoName": "EPERM",
+      "message": "Operation not permitted",
+      "status": "error"
+    },
+    "directoryRenameFlagsZero": {
+      "destinationExists": true,
+      "sourceAbsent": true,
+      "status": "success"
+    },
+    "directoryRenameNoReplace": {
+      "destinationAbsent": true,
+      "errno": 22,
+      "errnoName": "EINVAL",
+      "message": "Invalid argument",
+      "sourceStillExists": true,
+      "status": "error"
+    },
+    "regularFileHardLink": {
+      "sourceLinkCount": 2,
+      "status": "success"
+    },
+    "regularFileRenameNoReplace": {
+      "destinationAbsent": true,
+      "errno": 22,
+      "errnoName": "EINVAL",
+      "message": "Invalid argument",
+      "sourceStillExists": true,
+      "status": "error"
+    }
+  },
+  "schemaVersion": "lumin.phase1-wsl-mnt-namespace-probe.v1"
+}

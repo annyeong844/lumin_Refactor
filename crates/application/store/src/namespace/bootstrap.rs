@@ -30,10 +30,20 @@ pub(super) fn bootstrap_namespace(
     state_dir: PathBuf,
     state_directory: HeldEntry,
     state_directory_created: bool,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<NamespaceState, StoreError> {
     if !state_directory_created {
-        return resume_bootstrap(repository, state_dir, state_directory);
+        return resume_bootstrap(
+            repository,
+            state_dir,
+            state_directory,
+            #[cfg(feature = "audit-store-test-profile")]
+            profile,
+        );
     }
+    store_phase_begin!(profile, BootstrapSetup);
     if fs::read_dir(&state_dir).map_err(io_error)?.next().is_some() {
         return Err(StoreError::Integrity(
             "new state directory changed during bootstrap admission".to_owned(),
@@ -60,13 +70,25 @@ pub(super) fn bootstrap_namespace(
         },
     )?;
     hit(BootstrapCrashPoint::AfterLifecycleLockHeaderFlushed);
-    finish_bootstrap(repository, state_dir, state_directory, lock, global)
+    store_phase_end!(profile, BootstrapSetup);
+    finish_bootstrap(
+        repository,
+        state_dir,
+        state_directory,
+        lock,
+        global,
+        #[cfg(feature = "audit-store-test-profile")]
+        profile,
+    )
 }
 
 fn resume_bootstrap(
     repository: HeldRepository,
     state_dir: PathBuf,
     state_directory: HeldEntry,
+    #[cfg(feature = "audit-store-test-profile")] profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<NamespaceState, StoreError> {
     if fs::read_dir(&state_dir).map_err(io_error)?.next().is_none() {
         return Err(StoreError::Integrity(
@@ -110,7 +132,15 @@ fn resume_bootstrap(
             "pre-marker state cannot contain lifecycle.store".to_owned(),
         ));
     }
-    finish_bootstrap(repository, state_dir, state_directory, lock, header.global)
+    finish_bootstrap(
+        repository,
+        state_dir,
+        state_directory,
+        lock,
+        header.global,
+        #[cfg(feature = "audit-store-test-profile")]
+        profile,
+    )
 }
 
 fn finish_bootstrap(
@@ -119,7 +149,11 @@ fn finish_bootstrap(
     state_directory: HeldEntry,
     lock: HeldEntry,
     global: GlobalNamespaceBinding,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
 ) -> Result<NamespaceState, StoreError> {
+    store_phase_begin!(profile, BootstrapParents);
     let mut bindings = Vec::with_capacity(MANAGED_KINDS.len());
     for kind in MANAGED_KINDS {
         let binding = if entry_exists(&state_dir.join(kind.directory_name()))? {
@@ -151,6 +185,8 @@ fn finish_bootstrap(
     };
     state_directory.sync_directory()?;
     hit(BootstrapCrashPoint::AfterAllParentsFlushed);
+    store_phase_end!(profile, BootstrapParents);
+    store_phase_begin!(profile, BootstrapMarker);
     publish_repository_marker(
         &state_dir,
         &state_directory,
@@ -160,6 +196,7 @@ fn finish_bootstrap(
         },
     )?;
 
+    store_phase_end!(profile, BootstrapMarker);
     let state = NamespaceState {
         repository,
         state_dir,
@@ -167,10 +204,14 @@ fn finish_bootstrap(
     };
     let guard = NamespaceGuard::acquire_without_store(state.clone(), lock)?;
     hit(BootstrapCrashPoint::BeforeStoreCreation);
+    store_phase_begin!(profile, BootstrapStore);
     create_or_verify_store(&guard)?;
     guard.state_directory.sync_directory()?;
     hit(BootstrapCrashPoint::AfterStoreParentFlushed);
+    store_phase_end!(profile, BootstrapStore);
+    store_phase_begin!(profile, BootstrapValidation);
     guard.validate_complete()?;
+    store_phase_end!(profile, BootstrapValidation);
     hit(BootstrapCrashPoint::AfterCompleteValidation);
     FileExt::unlock(guard.lock.file()).map_err(io_error)?;
     Ok(state)

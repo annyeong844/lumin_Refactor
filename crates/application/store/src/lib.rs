@@ -1,9 +1,26 @@
+#[macro_use]
+mod audit_profile;
 mod cache;
 mod gate;
 mod generation;
 mod namespace;
 mod publication;
 mod retention;
+
+#[cfg(all(
+    feature = "audit-store-test-profile",
+    any(
+        feature = "cache-cleanup-test-fault",
+        feature = "collection-ordering-test-perturb",
+        feature = "lifecycle-migration-test-fault",
+        feature = "namespace-test-crash",
+        feature = "publication-test-crash",
+        feature = "retention-test-crash"
+    )
+))]
+compile_error!(
+    "audit-execution-test-profile cannot be combined with fault/crash/perturbation features (enabled by audit-store-test-profile)"
+);
 
 pub use gate::{
     ActiveGateCatalogCursor, ActiveGateCatalogItem, ActiveGateCatalogSnapshot, ActiveGateLease,
@@ -38,7 +55,13 @@ pub(crate) const ATTEMPT_LEASES: TableDefinition<&str, &[u8]> =
 pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
 pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
 pub(crate) const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
+const EVIDENCE_CHUNK_BYTES: usize = 63 * 1024;
+const EVIDENCE_CHUNK_PREFIX: &str = "run-chunk.v1/";
 const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
+
+pub struct PreparedRunEvidence {
+    row: Vec<u8>,
+}
 
 #[cfg(feature = "collection-ordering-test-perturb")]
 const COLLECTION_ORDERING_PERTURB_ENV: &str = "LUMIN_TEST_COLLECTION_ORDERING_PERTURB";
@@ -81,6 +104,10 @@ where
 }
 
 fn validate_closed_json_projection<T: Serialize>(bytes: &[u8], decoded: &T) -> Result<(), String> {
+    let canonical = serde_json::to_vec(decoded).map_err(|error| error.to_string())?;
+    if bytes == canonical {
+        return Ok(());
+    }
     let source =
         serde_json::from_slice::<serde_json::Value>(bytes).map_err(|error| error.to_string())?;
     let projected = serde_json::to_value(decoded).map_err(|error| error.to_string())?;
@@ -370,8 +397,50 @@ pub enum StoreError {
 
 impl RepositoryStore {
     pub fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
-        let namespace = namespace::NamespaceState::open(root, binding)?;
-        Self::from_namespace(namespace)
+        Self::open_core(
+            root,
+            binding,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    #[cfg(feature = "audit-store-test-profile")]
+    pub fn open_observed(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> (
+        Result<Self, StoreError>,
+        lumin_model::audit_store_diagnostic::AuditStoreTimings,
+    ) {
+        use lumin_model::audit_store_diagnostic::AuditStorePhase;
+        let mut recorder = audit_profile::StoreProfiler::new(AuditStorePhase::StoreOpen);
+        recorder.begin(AuditStorePhase::StoreOpen);
+        let result = Self::open_core(root, binding, Some(&mut recorder));
+        recorder.end(AuditStorePhase::StoreOpen);
+        (result, recorder.finish())
+    }
+
+    fn open_core(
+        root: &Path,
+        binding: &RepositoryBinding,
+        #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+            &mut audit_profile::StoreProfiler,
+        >,
+    ) -> Result<Self, StoreError> {
+        store_phase_begin!(profile, NamespaceOpen);
+        let namespace = namespace::NamespaceState::open(
+            root,
+            binding,
+            #[cfg(feature = "audit-store-test-profile")]
+            profile.as_deref_mut(),
+        )?;
+        store_phase_end!(profile, NamespaceOpen);
+        Self::from_namespace_core(
+            namespace,
+            #[cfg(feature = "audit-store-test-profile")]
+            profile,
+        )
     }
 
     /// Open only a marker-bound namespace without creating or resuming state.
@@ -385,12 +454,30 @@ impl RepositoryStore {
     }
 
     fn from_namespace(namespace: namespace::NamespaceState) -> Result<Self, StoreError> {
+        Self::from_namespace_core(
+            namespace,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    fn from_namespace_core(
+        namespace: namespace::NamespaceState,
+        #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+            &mut audit_profile::StoreProfiler,
+        >,
+    ) -> Result<Self, StoreError> {
         let state_dir = namespace.state_dir().to_path_buf();
         let store = Self {
             state_dir,
             namespace,
         };
-        store.recover_publication()?;
+        store_phase_begin!(profile, OpenRecovery);
+        store.recover_publication(
+            #[cfg(feature = "audit-store-test-profile")]
+            profile.as_deref_mut(),
+        )?;
+        store_phase_end!(profile, OpenRecovery);
         Ok(store)
     }
 
@@ -499,6 +586,13 @@ impl RepositoryStore {
         operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         self.namespace.with_exclusive_lock(operation)
+    }
+
+    fn with_admission_exclusive_lock<T>(
+        &self,
+        operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.namespace.with_admission_exclusive_lock(operation)
     }
 
     #[cfg(feature = "publication-test-crash")]
@@ -694,22 +788,79 @@ fn read_live_run(
     Ok((record, read_evidence_store(&bytes)?))
 }
 
-fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), StoreError> {
-    let bytes = serde_json::to_vec(evidence).map_err(serialization_error)?;
+pub fn prepare_run_evidence(evidence: &RunEvidence) -> Result<PreparedRunEvidence, StoreError> {
+    if evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "run evidence uses unsupported schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
+            evidence.schema_version
+        )));
+    }
+    lumin_evidence::validate_run_evidence_identities(evidence).map_err(|error| {
+        StoreError::Integrity(format!("run evidence identity validation failed: {error}"))
+    })?;
+    let row = serde_json::to_vec(evidence).map_err(serialization_error)?;
+    Ok(PreparedRunEvidence { row })
+}
+
+fn write_evidence_store(
+    path: &Path,
+    evidence: &PreparedRunEvidence,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut audit_profile::StoreProfiler,
+    >,
+) -> Result<(), StoreError> {
+    store_phase_begin!(profile, EvidenceCreate);
     let database = Database::create(path).map_err(backend_error)?;
+    store_phase_end!(profile, EvidenceCreate);
+    store_phase_begin!(profile, EvidenceBeginWrite);
     let write = database.begin_write().map_err(backend_error)?;
+    store_phase_end!(profile, EvidenceBeginWrite);
+    store_phase_begin!(profile, EvidenceRows);
     {
         let mut table = write.open_table(EVIDENCE).map_err(backend_error)?;
-        table
-            .insert("run", bytes.as_slice())
-            .map_err(backend_error)?;
+        // redb reserves a power-of-two page extent for one large variable-width value. A 63 KiB
+        // payload plus its key/value framing stays below the 64 KiB extent boundary, keeping the
+        // immutable container proportional to its logical payload while preserving one
+        // deterministic, closed physical representation.
+        for (index, chunk) in evidence.row.chunks(EVIDENCE_CHUNK_BYTES).enumerate() {
+            let key = format!("{EVIDENCE_CHUNK_PREFIX}{index:016x}");
+            table.insert(key.as_str(), chunk).map_err(backend_error)?;
+        }
     }
+    store_phase_end!(profile, EvidenceRows);
+    store_phase_begin!(profile, EvidenceCommit);
     write.commit().map_err(backend_error)?;
+    store_phase_end!(profile, EvidenceCommit);
+    store_phase_begin!(profile, EvidenceClose);
     drop(database);
+    store_phase_end!(profile, EvidenceClose);
     Ok(())
 }
 
+impl PreparedRunEvidence {
+    pub(crate) fn row(&self) -> &[u8] {
+        &self.row
+    }
+}
+
 fn read_evidence_store(bytes: &[u8]) -> Result<RunEvidence, StoreError> {
+    let bytes = read_evidence_store_row(bytes)?;
+    let evidence: RunEvidence = serde_json::from_slice(&bytes).map_err(serialization_error)?;
+    validate_closed_json_projection(&bytes, &evidence)
+        .map_err(|error| StoreError::Integrity(format!("run evidence row {error}")))?;
+    if evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "run evidence uses unsupported schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
+            evidence.schema_version
+        )));
+    }
+    lumin_evidence::validate_run_evidence_identities(&evidence).map_err(|error| {
+        StoreError::Integrity(format!("run evidence identity validation failed: {error}"))
+    })?;
+    Ok(evidence)
+}
+
+pub(crate) fn read_evidence_store_row(bytes: &[u8]) -> Result<Vec<u8>, StoreError> {
     let backend = InMemoryBackend::new();
     let length = u64::try_from(bytes.len())
         .map_err(|_| StoreError::Integrity("evidence store byte count overflow".to_owned()))?;
@@ -748,30 +899,48 @@ fn read_evidence_store(bytes: &[u8]) -> Result<RunEvidence, StoreError> {
     }
     let table = read.open_table(EVIDENCE).map_err(backend_error)?;
     let mut rows = table.iter().map_err(backend_error)?;
-    let (key, value) = rows
+    let (first_key, first_value) = rows
         .next()
         .transpose()
         .map_err(backend_error)?
         .ok_or_else(|| StoreError::Integrity("run evidence row is missing".to_owned()))?;
-    if key.value() != "run" || rows.next().transpose().map_err(backend_error)?.is_some() {
-        return Err(StoreError::Integrity(
-            "evidence store must contain exactly the run evidence row".to_owned(),
-        ));
+    if first_key.value() == "run" {
+        if rows.next().transpose().map_err(backend_error)?.is_some() {
+            return Err(StoreError::Integrity(
+                "legacy evidence store contains additional rows".to_owned(),
+            ));
+        }
+        return Ok(first_value.value().to_vec());
     }
-    let bytes = value.value().to_vec();
-    let evidence: RunEvidence = serde_json::from_slice(&bytes).map_err(serialization_error)?;
-    validate_closed_json_projection(&bytes, &evidence)
-        .map_err(|error| StoreError::Integrity(format!("run evidence row {error}")))?;
-    if evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
-        return Err(StoreError::IncompatibleStateSchema(format!(
-            "run evidence uses unsupported schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
-            evidence.schema_version
-        )));
+
+    let mut result = Vec::new();
+    let mut previous_chunk_len = None;
+    for (index, row) in std::iter::once(Ok((first_key, first_value)))
+        .chain(rows)
+        .enumerate()
+    {
+        if previous_chunk_len.is_some_and(|length| length != EVIDENCE_CHUNK_BYTES) {
+            return Err(StoreError::Integrity(
+                "evidence store contains a noncanonical chunk inventory".to_owned(),
+            ));
+        }
+        let (key, value) = row.map_err(backend_error)?;
+        let expected = format!("{EVIDENCE_CHUNK_PREFIX}{index:016x}");
+        if key.value() != expected
+            || value.value().is_empty()
+            || value.value().len() > EVIDENCE_CHUNK_BYTES
+        {
+            return Err(StoreError::Integrity(
+                "evidence store contains a noncanonical chunk inventory".to_owned(),
+            ));
+        }
+        result
+            .try_reserve(value.value().len())
+            .map_err(|_| StoreError::Integrity("run evidence row is too large".to_owned()))?;
+        result.extend_from_slice(value.value());
+        previous_chunk_len = Some(value.value().len());
     }
-    lumin_evidence::validate_run_evidence_identities(&evidence).map_err(|error| {
-        StoreError::Integrity(format!("run evidence identity validation failed: {error}"))
-    })?;
-    Ok(evidence)
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -809,4 +978,109 @@ fn backend_error(error: impl std::fmt::Display) -> StoreError {
 
 fn serialization_error(error: serde_json::Error) -> StoreError {
     StoreError::Serialization(error.to_string())
+}
+
+#[cfg(test)]
+mod evidence_store_tests {
+    use super::*;
+
+    #[test]
+    fn chunked_evidence_store_round_trips_the_exact_row() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = tempfile::tempdir()?;
+        let path = fixture.path().join("evidence.store");
+        let row = (0..(EVIDENCE_CHUNK_BYTES * 2 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        write_evidence_store(
+            &path,
+            &PreparedRunEvidence { row: row.clone() },
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )?;
+
+        let store_bytes = fs::read(&path)?;
+        assert_eq!(read_evidence_store_row(&store_bytes)?, row);
+
+        let database = Database::open(&path)?;
+        let read = database.begin_read()?;
+        let table = read.open_table(EVIDENCE)?;
+        let rows = table
+            .iter()?
+            .map(|row| {
+                let (key, value) = row?;
+                Ok((key.value().to_owned(), value.value().len()))
+            })
+            .collect::<Result<Vec<_>, redb::StorageError>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    format!("{EVIDENCE_CHUNK_PREFIX}0000000000000000"),
+                    EVIDENCE_CHUNK_BYTES
+                ),
+                (
+                    format!("{EVIDENCE_CHUNK_PREFIX}0000000000000001"),
+                    EVIDENCE_CHUNK_BYTES
+                ),
+                (format!("{EVIDENCE_CHUNK_PREFIX}0000000000000002"), 17),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_single_row_evidence_store_remains_readable() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = tempfile::tempdir()?;
+        let path = fixture.path().join("evidence.store");
+        write_test_evidence_store(&path, &[("run", b"legacy-row")])?;
+
+        assert_eq!(read_evidence_store_row(&fs::read(path)?)?, b"legacy-row");
+        Ok(())
+    }
+
+    #[test]
+    fn chunked_evidence_store_rejects_gaps_and_short_nonfinal_chunks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let gap = fixture.path().join("gap.store");
+        write_test_evidence_store(
+            &gap,
+            &[(&format!("{EVIDENCE_CHUNK_PREFIX}0000000000000001"), b"gap")],
+        )?;
+        assert!(matches!(
+            read_evidence_store_row(&fs::read(gap)?),
+            Err(StoreError::Integrity(detail)) if detail.contains("noncanonical chunk inventory")
+        ));
+
+        let short = fixture.path().join("short.store");
+        let first = format!("{EVIDENCE_CHUNK_PREFIX}0000000000000000");
+        let second = format!("{EVIDENCE_CHUNK_PREFIX}0000000000000001");
+        write_test_evidence_store(
+            &short,
+            &[(first.as_str(), b"short"), (second.as_str(), b"next")],
+        )?;
+        assert!(matches!(
+            read_evidence_store_row(&fs::read(short)?),
+            Err(StoreError::Integrity(detail)) if detail.contains("noncanonical chunk inventory")
+        ));
+        Ok(())
+    }
+
+    fn write_test_evidence_store(
+        path: &Path,
+        rows: &[(&str, &[u8])],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let database = Database::create(path)?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(EVIDENCE)?;
+            for (key, value) in rows {
+                table.insert(*key, *value)?;
+            }
+        }
+        write.commit()?;
+        Ok(())
+    }
 }

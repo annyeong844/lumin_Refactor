@@ -169,6 +169,12 @@ checkout.
 
 Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
+Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
+The latest completed Windows CI scaling budget is missed; native Linux's
+numeric matrix passes. Fresh measurements for subsequent product changes,
+permanent runtime worker/stage observations, allocator cost approval, and the WSL `/mnt`
+diagnostic disposition remain open.
+
 - [ ] Run the blocking Windows and native-Linux benchmark matrix against the
   completed public binary and frozen fixtures.
 - [ ] Record cold, warm, `jobs=1`, default-jobs, package-size, and peak-memory

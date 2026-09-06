@@ -1,3 +1,5 @@
+#[cfg(feature = "audit-execution-test-profile")]
+pub mod audit_diagnostic;
 mod cache;
 mod help_agent;
 mod query;
@@ -22,6 +24,8 @@ use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandOutput {
+    #[cfg(feature = "audit-execution-test-profile")]
+    pub audit_diagnostic: Option<audit_diagnostic::PendingAuditDiagnostic>,
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
@@ -108,6 +112,8 @@ pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
         Ok(identity) => identity,
         Err(error) => {
             return CommandOutput {
+                #[cfg(feature = "audit-execution-test-profile")]
+                audit_diagnostic: None,
                 exit_code: error_exit_code(&error),
                 stdout: String::new(),
                 stderr: format!("lumin: {error}\n"),
@@ -139,6 +145,8 @@ fn execute_with_input(
     match execute_inner(root, arguments, build_identity, input) {
         Ok(output) => output,
         Err(error) => CommandOutput {
+            #[cfg(feature = "audit-execution-test-profile")]
+            audit_diagnostic: None,
             exit_code: error_exit_code(&error),
             stdout: String::new(),
             stderr: format!("lumin: {error}\n"),
@@ -171,6 +179,8 @@ struct CommandSuccess {
 impl From<CommandSuccess> for CommandOutput {
     fn from(success: CommandSuccess) -> Self {
         Self {
+            #[cfg(feature = "audit-execution-test-profile")]
+            audit_diagnostic: None,
             exit_code: success.exit_code,
             stdout: success.stdout,
             stderr: String::new(),
@@ -194,7 +204,12 @@ fn execute_inner(
         .next_utf8("command")?
         .ok_or(CliError::MissingCommand)?;
     match command.as_str() {
-        "audit" => audit(root, &mut arguments).map(success),
+        "audit" => audit(
+            root,
+            &mut arguments,
+            #[cfg(feature = "audit-execution-test-profile")]
+            build_identity,
+        ),
         "overview" => overview(root, &mut arguments).map(success),
         "findings" => findings(root, &mut arguments).map(success),
         "explain" => explain(root, &mut arguments).map(success),
@@ -242,12 +257,25 @@ fn default_jobs() -> usize {
     compute_default_jobs(std::thread::available_parallelism().ok())
 }
 
-fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
+fn audit(
+    root: &Path,
+    arguments: &mut Arguments,
+    #[cfg(feature = "audit-execution-test-profile")] build_identity: &BuildIdentity,
+) -> Result<CommandOutput, CliError> {
+    #[cfg(feature = "audit-execution-test-profile")]
+    let command_start = std::time::Instant::now();
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
     let mut role_overrides = Vec::new();
     let mut entries = Vec::new();
+    #[cfg(not(feature = "audit-execution-test-profile"))]
     let mut jobs = default_jobs();
+    #[cfg(feature = "audit-execution-test-profile")]
+    let parallelism = std::thread::available_parallelism();
+    #[cfg(feature = "audit-execution-test-profile")]
+    let mut jobs = compute_default_jobs(parallelism.as_ref().ok().copied());
+    #[cfg(feature = "audit-execution-test-profile")]
+    let mut requested_jobs = None;
     let mut resolution_profile = None;
     let mut format = "json".to_owned();
 
@@ -274,6 +302,10 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
                     .ok()
                     .filter(|value| *value > 0)
                     .ok_or_else(|| CliError::InvalidJobs(value.clone()))?;
+                #[cfg(feature = "audit-execution-test-profile")]
+                {
+                    requested_jobs = Some(jobs);
+                }
             }
             "--format" => format = arguments.required_utf8("--format")?,
             "--resolution-profile" => {
@@ -295,6 +327,16 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
         jobs,
         resolution_profile,
     })?;
+    #[cfg(feature = "audit-execution-test-profile")]
+    let mut diagnostic = audit_diagnostic::PendingAuditDiagnostic::new(
+        command_start,
+        build_identity,
+        &result,
+        requested_jobs,
+        parallelism,
+    );
+    #[cfg(feature = "audit-execution-test-profile")]
+    let response_start = std::time::Instant::now();
     let response = lumin_protocol::audit_response(
         &result.repository_root,
         result.published.attempt_id,
@@ -302,7 +344,16 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
         result.published.sequence,
         &result.evidence,
     );
-    lumin_protocol::to_json(&response).map_err(Into::into)
+    let stdout = lumin_protocol::to_json(&response)?;
+    #[cfg(feature = "audit-execution-test-profile")]
+    diagnostic.response_elapsed(response_start.elapsed());
+    let output = success(stdout);
+    #[cfg(feature = "audit-execution-test-profile")]
+    let output = CommandOutput {
+        audit_diagnostic: Some(diagnostic),
+        ..output
+    };
+    Ok(output)
 }
 
 fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {

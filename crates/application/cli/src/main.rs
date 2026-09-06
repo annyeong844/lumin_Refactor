@@ -2,6 +2,10 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(feature = "lifecycle-test-fault")]
 mod delivery_barrier;
 
@@ -79,6 +83,11 @@ fn emit_command_output(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> i32 {
+    #[cfg(feature = "audit-execution-test-profile")]
+    let stdout_start = output
+        .audit_diagnostic
+        .as_ref()
+        .map(|_| std::time::Instant::now());
     if !output.stdout.is_empty()
         && let Err(error) = write_stdout(output, delivery_sequence, stdout)
     {
@@ -101,6 +110,8 @@ fn emit_command_output(
         }
         return output.delivery_failure_exit_code();
     }
+    #[cfg(feature = "audit-execution-test-profile")]
+    let stdout_end = stdout_start.map(|start| (start.elapsed(), std::time::Instant::now()));
     if !output.stderr.is_empty() {
         if stderr.write_all(output.stderr.as_bytes()).is_err() && output.exit_code == 0 {
             return 1;
@@ -120,6 +131,15 @@ fn emit_command_output(
         let _ = writeln!(stderr, "lumin: {error}");
         let _ = stderr.flush();
         return 1;
+    }
+    #[cfg(feature = "audit-execution-test-profile")]
+    if let Some(diagnostic) = &output.audit_diagnostic {
+        let Some((elapsed, command_end)) = stdout_end else {
+            return 1;
+        };
+        if diagnostic.emit(elapsed, command_end, stderr).is_err() {
+            return 1;
+        }
     }
     output.exit_code
 }

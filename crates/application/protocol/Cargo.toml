@@ -7,6 +7,8 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+audit-store-test-profile = ["audit-execution-test-profile", "lumin-model/audit-store-test-profile"]
+audit-execution-test-profile = ["lumin-model/audit-execution-test-profile"]
 collection-ordering-test-perturb = []
 
 [dependencies]

@@ -11,6 +11,8 @@ const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 const CHECKOUT: &str = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
 const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
+const UPLOAD_ARTIFACT: &str =
+    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1";
 const INSTALL_TOOLS: &str =
     "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4";
 const GUARD_PREFIX: &str = concat!(
@@ -20,6 +22,10 @@ const GUARD_PREFIX: &str = concat!(
 const TEST_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
     "tools/xtask/bootstrap/test_source_provenance.py"
+);
+const BENCHMARK_TEST_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/benchmark/test_measure_process.py"
 );
 const CI_POLICY_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
@@ -62,6 +68,46 @@ const RELEASE_SKILL_PROBE_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- package-check skills"
 );
+const RELEASE_BENCHMARK_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- benchmark foundation"
+);
+// Reviewed W3 orchestration is one indivisible body. Do not allow its shell
+// fragments individually: an inserted command or changed failure check must fail.
+const DIAGNOSTIC_BUILD_BODY: &str = r#"        run: |
+          & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --features audit-store-test-profile --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-model -p lumin-engine -p lumin-store --lib --features audit-store-test-profile audit_ --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $incompatible = & "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo check -p lumin-cli --bin lumin --features audit-store-test-profile,lifecycle-test-fault --locked 2>&1
+          $incompatibleExit = $LASTEXITCODE
+          $incompatible | ForEach-Object { Write-Output $_ }
+          if ($incompatibleExit -eq 0 -or -not ($incompatible -match 'audit-execution-test-profile cannot be combined')) { throw 'incompatible diagnostic features were not refused by their owner' }
+          $record = [ordered]@{
+            sourceRevision = '${{ github.sha }}'
+            lockfileSha256 = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+            controlFeatures = @()
+            diagnosticFeatures = @('audit-store-test-profile')
+            diagnosticFeatureClosure = [ordered]@{
+              'lumin-cli' = @('audit-execution-test-profile', 'audit-store-test-profile')
+              'lumin-engine' = @('audit-execution-test-profile', 'audit-store-test-profile')
+              'lumin-model' = @('audit-execution-test-profile', 'audit-store-test-profile')
+              'lumin-protocol' = @('audit-execution-test-profile', 'audit-store-test-profile')
+              'lumin-store' = @('audit-store-test-profile')
+            }
+            target = 'x86_64-pc-windows-msvc'
+            toolchain = '1.96.0'
+            controlCommand = 'cargo build -p lumin-cli --release --locked'
+            diagnosticCommand = 'cargo build -p lumin-cli --release --features audit-store-test-profile --locked'
+            controlSha256 = (Get-FileHash "$env:RUNNER_TEMP/lumin-package/bin/lumin.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+            diagnosticSha256 = (Get-FileHash "$env:CARGO_TARGET_DIR/release/lumin.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          $recordPath = "$env:RUNNER_TEMP/lumin-audit-store-diagnostic-build.json"
+          if (Test-Path -LiteralPath $recordPath) { throw 'diagnostic build record already exists' }
+          [System.IO.File]::WriteAllText($recordPath, ($record | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
+          # The incompatible-feature check above is an expected native failure.
+          exit 0
+"#;
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
@@ -70,7 +116,16 @@ const WINDOWS_INTEGRATION_RUN: &str = concat!(
 const WINDOWS_STORE_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
-    "--suite store-lib --index ${{ matrix.shard }} --count 4"
+    "--suite store-lib --index ${{ matrix.shard }} --count 5"
+);
+const LINUX_MUSL_C_SETUP: &str = concat!(
+    "      - name: Install Linux musl C compiler\n",
+    "        if: ${{ matrix.package_target == 'linux-x64' }}\n",
+    "        shell: bash\n",
+    "        run: |\n",
+    "          sudo apt-get update\n",
+    "          sudo apt-get install --no-install-recommends --yes musl-tools\n",
+    "          x86_64-linux-musl-gcc --version\n",
 );
 const ALL_TARGET_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
@@ -237,7 +292,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
 }
 
 fn validate_actions(source: &str, violations: &mut Vec<String>) {
-    let allowed = [CHECKOUT, SETUP_PYTHON, INSTALL_TOOLS];
+    let allowed = [CHECKOUT, SETUP_PYTHON, UPLOAD_ARTIFACT, INSTALL_TOOLS];
     for line in source.lines() {
         let Some(action) = line.trim().strip_prefix("uses: ") else {
             continue;
@@ -301,13 +356,23 @@ fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
         violations.push(format!("guarded job {name} lacks pinned Python setup"));
     }
 
-    for line in run_commands(block) {
+    let ordinary_block = if name == "release" {
+        block.replacen(DIAGNOSTIC_BUILD_BODY, "", 1)
+    } else {
+        block.to_owned()
+    };
+    for line in run_commands(&ordinary_block) {
         if line.contains("tools/xtask/bootstrap/source_provenance.py") {
             validate_guard_command(name, &line, violations);
         }
         if line.contains("test_source_provenance.py") && line != TEST_COMMAND {
             violations.push(format!(
                 "bootstrap tests in {name} must use the pinned isolated Python command"
+            ));
+        }
+        if line.contains("test_measure_process.py") && line != BENCHMARK_TEST_COMMAND {
+            violations.push(format!(
+                "benchmark observer tests in {name} must use the pinned isolated Python command"
             ));
         }
         if line.contains("test_ci_policy.py") && line != CI_POLICY_TEST_COMMAND {
@@ -392,6 +457,9 @@ fn is_reviewed_run_command(line: &str) -> bool {
         "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
         "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
         "rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0",
+        "sudo apt-get update",
+        "sudo apt-get install --no-install-recommends --yes musl-tools",
+        "x86_64-linux-musl-gcc --version",
         "$cargo = rustup which --toolchain 1.96.0 cargo",
         "$clippy = rustup which --toolchain 1.96.0 cargo-clippy",
         "$python = & \"$env:SETUP_PYTHON\" -I -S -c \"import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))\"",
@@ -411,6 +479,7 @@ fn is_reviewed_run_command(line: &str) -> bool {
         PRIVATE_TARGET,
         "& \"$env:PINNED_CARGO\" fmt --all --check",
         TEST_COMMAND,
+        BENCHMARK_TEST_COMMAND,
         DIRECT_AUDIT,
         DIRECT_DENY,
         STRUCTURAL_CHECK,
@@ -724,6 +793,7 @@ fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut V
         ("Windows store gate", "store-lib", 1),
         ("Windows store namespace", "store-lib", 2),
         ("Windows store retention", "store-lib", 3),
+        ("Windows store evidence", "store-lib", 4),
     ] {
         let partition = format!(
             "          - name: {name}\n            suite: {suite}\n            shard: {shard}\n"
@@ -734,7 +804,7 @@ fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut V
             ));
         }
     }
-    for (key, expected_count) in [("suite:", 5), ("shard:", 5)] {
+    for (key, expected_count) in [("suite:", 6), ("shard:", 6)] {
         if block
             .lines()
             .map(str::trim)
@@ -913,11 +983,12 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
     let lines = block.lines().map(str::trim).collect::<Vec<_>>();
     for required in [
         "package_target: linux-x64",
+        "benchmark_environment: linux-release",
         "build_arguments: --target x86_64-unknown-linux-musl",
         "binary_path: x86_64-unknown-linux-musl/release/lumin",
         "package_target: windows-x64",
+        "benchmark_environment: windows-ntfs",
         "binary_path: release/lumin.exe",
-        "LUMIN_BUILD_REVISION: ${{ github.sha }}",
     ] {
         if lines.iter().filter(|line| **line == required).count() != 1 {
             violations.push(format!(
@@ -934,7 +1005,71 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
             "LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}",
             2,
         ),
-        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 3),
+        ("LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package", 5),
+        ("LUMIN_BUILD_REVISION: ${{ github.sha }}", 2),
+        (
+            "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-audit-store-diagnostic-target",
+            1,
+        ),
+        (
+            "LUMIN_AUDIT_CONTROL_BINARY: ${{ runner.temp }}/lumin-package/bin/lumin.exe",
+            1,
+        ),
+        (
+            "LUMIN_AUDIT_DIAGNOSTIC_BINARY: ${{ runner.temp }}/lumin-audit-store-diagnostic-target/release/lumin.exe",
+            2,
+        ),
+        (
+            "LUMIN_AUDIT_DIAGNOSTIC_BUILD_RECORD: ${{ runner.temp }}/lumin-audit-store-diagnostic-build.json",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_CAPTURE_ROOT: ${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_CAPTURE_ROOT: ${{ runner.temp }}/lumin-audit-store-diagnostic-captures",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_ENVIRONMENT: ${{ matrix.benchmark_environment }}",
+            1,
+        ),
+        (
+            "LUMIN_BENCHMARK_REPORT: ${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json",
+            1,
+        ),
+        (
+            "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+            2,
+        ),
+        (
+            "name: lumin-foundation-benchmark-${{ matrix.package_target }}",
+            1,
+        ),
+        (
+            "${{ runner.temp }}/lumin-foundation-benchmark-${{ matrix.package_target }}.json",
+            1,
+        ),
+        (
+            "${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}/",
+            1,
+        ),
+        (
+            "${{ runner.temp }}/lumin-audit-store-diagnostic-captures/",
+            1,
+        ),
+        (
+            "${{ runner.temp }}/lumin-audit-store-diagnostic-report.json",
+            1,
+        ),
+        (
+            "${{ runner.temp }}/lumin-audit-store-diagnostic-build.json",
+            1,
+        ),
+        ("if-no-files-found: error", 2),
+        ("retention-days: 90", 2),
+        ("compression-level: 0", 2),
     ] {
         if lines.iter().filter(|line| **line == binding).count() != count {
             violations.push(format!(
@@ -943,12 +1078,33 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
         }
     }
 
+    if block.matches(DIAGNOSTIC_BUILD_BODY).count() != 1 || block.contains("continue-on-error") {
+        violations.push(
+            "release must retain the exact isolated diagnostic build and failure evidence"
+                .to_owned(),
+        );
+    }
     let commands = run_commands(block);
+    let compiler = commands
+        .iter()
+        .position(|command| command == "x86_64-linux-musl-gcc --version");
+    let build = commands
+        .iter()
+        .position(|command| command == RELEASE_BUILD_RUN);
+    if block.matches(LINUX_MUSL_C_SETUP).count() != 1
+        || !matches!((compiler, build), (Some(compiler), Some(build)) if compiler < build)
+    {
+        violations.push(
+            "release job must prepare the reviewed Linux musl C compiler before building"
+                .to_owned(),
+        );
+    }
     for (command, label) in [
         (RELEASE_BUILD_RUN, "locked release build"),
         (RELEASE_STAGE_RUN, "package staging"),
         (RELEASE_PLATFORM_PROBE_RUN, "platform package probe"),
         (RELEASE_SKILL_PROBE_RUN, "skill package probe"),
+        (RELEASE_BENCHMARK_RUN, "release benchmark"),
     ] {
         if commands
             .iter()
@@ -970,12 +1126,34 @@ fn validate_release_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<St
     let skills = commands
         .iter()
         .position(|command| command == RELEASE_SKILL_PROBE_RUN);
+    let benchmark = commands
+        .iter()
+        .position(|command| command == RELEASE_BENCHMARK_RUN);
     if !matches!(
-        (stage, platform, skills),
-        (Some(stage), Some(platform), Some(skills)) if stage < platform && platform < skills
+        (stage, platform, skills, benchmark),
+        (Some(stage), Some(platform), Some(skills), Some(benchmark))
+            if stage < platform && platform < skills && skills < benchmark
     ) {
         violations.push(
-            "release job must stage one package before its platform and skill probes".to_owned(),
+            "release job must stage one package before its platform, skill, and benchmark probes"
+                .to_owned(),
+        );
+    }
+    let benchmark_command = block.find(RELEASE_BENCHMARK_RUN);
+    let retained_report = block.find(&format!("uses: {UPLOAD_ARTIFACT}"));
+    if !matches!(
+        (benchmark_command, retained_report),
+        (Some(benchmark), Some(retained)) if benchmark < retained
+    ) || block
+        .lines()
+        .map(str::trim)
+        .filter(|line| *line == "if: ${{ always() }}")
+        .count()
+        != 1
+    {
+        violations.push(
+            "release benchmark report must be retained after measurement, including target failure"
+                .to_owned(),
         );
     }
 }
@@ -1062,6 +1240,15 @@ fn validate_bootstrap_test_job(jobs: &BTreeMap<String, String>, violations: &mut
     {
         violations.push("bootstrap test suite must run once in its own process job".to_owned());
     }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == BENCHMARK_TEST_COMMAND)
+        .count()
+        != 1
+    {
+        violations
+            .push("benchmark observer tests must run once in the bootstrap test job".to_owned());
+    }
 }
 
 fn validate_no_nested_dependency_admission(root: &Path, result: &mut CargoBootstrapResult) {
@@ -1107,6 +1294,48 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_build_and_archives_cannot_bypass_the_reviewed_isolation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let original = workflow()?;
+        for (before, after) in [
+            (DIAGNOSTIC_BUILD_BODY, ""),
+            ("$incompatibleExit -eq 0", "$incompatibleExit -ne 0"),
+            ("exit 0\n", "cargo build --release\n"),
+            (
+                "controlFeatures = @()",
+                "controlFeatures = @('audit-execution-test-profile')",
+            ),
+            (
+                "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-audit-store-diagnostic-target",
+                "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target",
+            ),
+            (
+                "${{ runner.temp }}/lumin-foundation-captures-${{ matrix.package_target }}/",
+                "",
+            ),
+            (
+                "${{ runner.temp }}/lumin-audit-store-diagnostic-captures/",
+                "",
+            ),
+        ] {
+            assert!(original.contains(before), "fixture did not mutate {before}");
+            let found = violations(&original.replace(before, after));
+            assert!(!found.is_empty(), "accepted diagnostic mutation: {before}");
+        }
+        // A standalone early-success command cannot borrow the complete body's exception.
+        let source = original.replace(
+            "        id: benchmark\n",
+            "        id: benchmark\n        continue-on-error: true\n",
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|v| v.contains("diagnostic build"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn removing_one_guard_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let guarded = format!("{GUARD_PREFIX} -- cargo build --locked -p lumin-xtask");
         let source = workflow()?.replace(&guarded, "cargo build --locked -p lumin-xtask");
@@ -1129,6 +1358,82 @@ mod tests {
             violations(&source)
                 .iter()
                 .any(|violation| violation.contains("reviewed package staging"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_musl_compiler_setup_is_required_before_build()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?;
+        for changed in [
+            source.replacen(LINUX_MUSL_C_SETUP, "", 1),
+            source.replacen("--yes musl-tools", "--yes gcc", 1),
+            source.replacen("x86_64-linux-musl-gcc --version", "gcc --version", 1),
+            source.replacen(
+                LINUX_MUSL_C_SETUP,
+                &LINUX_MUSL_C_SETUP.replace("shell: bash", "shell: pwsh"),
+                1,
+            ),
+            source.replacen(LINUX_MUSL_C_SETUP, "", 1).replacen(
+                "      - name: Probe packaged binary without runtime build tools",
+                &format!("{LINUX_MUSL_C_SETUP}\n      - name: Probe packaged binary without runtime build tools"),
+                1,
+            ),
+        ] {
+            assert_ne!(source, changed);
+            assert!(
+                violations(&changed)
+                    .iter()
+                    .any(|violation| violation.contains("Linux musl C compiler")),
+                "missing, changed, or late musl compiler setup was accepted",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn release_package_benchmark_is_required_after_probes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = workflow()?.replace(RELEASE_BENCHMARK_RUN, RELEASE_SKILL_PROBE_RUN);
+        let found = violations(&source);
+        assert!(
+            found.iter().any(|violation| {
+                violation.contains("release benchmark")
+                    || violation.contains("platform, skill, and benchmark probes")
+            }),
+            "{found:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_benchmark_report_retention_is_required() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace(
+            &format!("uses: {UPLOAD_ARTIFACT}"),
+            "uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        );
+        let found = violations(&source);
+        assert!(
+            found.iter().any(|violation| {
+                violation.contains("unpinned CI action")
+                    || violation.contains("benchmark report must be retained")
+            }),
+            "{found:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn release_benchmark_report_is_retained_on_target_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace("if: ${{ always() }}", "if: ${{ success() }}");
+        let found = violations(&source);
+        assert!(
+            found
+                .iter()
+                .any(|violation| violation.contains("including target failure")),
+            "{found:#?}"
         );
         Ok(())
     }
@@ -1274,6 +1579,20 @@ mod tests {
                 "",
                 1,
             ),
+            source.replacen(
+                concat!(
+                    "          - name: Windows store evidence\n",
+                    "            suite: store-lib\n",
+                    "            shard: 4\n"
+                ),
+                "",
+                1,
+            ),
+            source.replacen(
+                "--suite store-lib --index ${{ matrix.shard }} --count 5",
+                "--suite store-lib --index ${{ matrix.shard }} --count 4",
+                1,
+            ),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
             source.replacen("--row-shard-count 8", "--row-shard-count 7", 1),
@@ -1356,7 +1675,11 @@ mod tests {
                 "    name: Required\n    continue-on-error: true\n",
                 1,
             ),
-            source.replacen("    if: ${{ always() }}\n", "    if: ${{ false }}\n", 1),
+            source.replacen(
+                "  required:\n    name: Required\n    if: ${{ always() }}\n",
+                "  required:\n    name: Required\n    if: ${{ false }}\n",
+                1,
+            ),
         ] {
             assert!(
                 violations(&changed)

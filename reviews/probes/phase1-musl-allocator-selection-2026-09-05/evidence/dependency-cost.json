@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "lumin.phase1-musl-allocator-cost.v1",
+  "target": "x86_64-unknown-linux-musl",
+  "targetPredicate": "cfg(all(target_os = \"linux\", target_env = \"musl\"))",
+  "allocator": {
+    "package": "mimalloc",
+    "version": "0.1.52",
+    "features": [
+      "v2"
+    ],
+    "license": "MIT"
+  },
+  "lockedPackages": [
+    {
+      "name": "mimalloc",
+      "version": "0.1.52",
+      "checksum": "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862",
+      "role": "target-specific runtime allocator wrapper"
+    },
+    {
+      "name": "libmimalloc-sys",
+      "version": "0.1.49",
+      "checksum": "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9",
+      "role": "target-specific vendored native allocator and FFI"
+    },
+    {
+      "name": "cc",
+      "version": "1.4.5",
+      "checksum": "005ec2760ca554fae18df7a11195552ec576cd665632a881bc011d5bb2fd4d80",
+      "role": "build dependency"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.12",
+      "checksum": "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d",
+      "role": "build-dependency transitive support"
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1",
+      "checksum": "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba",
+      "role": "build-dependency transitive support"
+    }
+  ],
+  "extractedSourceInventory": [
+    {
+      "package": "mimalloc-0.1.52",
+      "files": 12,
+      "bytes": 16833,
+      "rustFiles": 2,
+      "rustBytes": 6258,
+      "nativeFiles": 0,
+      "nativeBytes": 0,
+      "rustUnsafeLexemes": 17
+    },
+    {
+      "package": "libmimalloc-sys-0.1.49",
+      "files": 138,
+      "bytes": 2111872,
+      "rustFiles": 3,
+      "rustBytes": 55733,
+      "nativeFiles": 78,
+      "nativeBytes": 1786048,
+      "rustUnsafeLexemes": 19
+    },
+    {
+      "package": "cc-1.4.5",
+      "files": 29,
+      "bytes": 417579,
+      "rustFiles": 16,
+      "rustBytes": 353917,
+      "nativeFiles": 1,
+      "nativeBytes": 206,
+      "rustUnsafeLexemes": 20
+    },
+    {
+      "package": "find-msvc-tools-0.1.12",
+      "files": 19,
+      "bytes": 116818,
+      "rustFiles": 10,
+      "rustBytes": 98541,
+      "nativeFiles": 0,
+      "nativeBytes": 0,
+      "rustUnsafeLexemes": 55
+    },
+    {
+      "package": "shlex-2.0.1",
+      "files": 14,
+      "bytes": 57770,
+      "rustFiles": 2,
+      "rustBytes": 31227,
+      "nativeFiles": 0,
+      "nativeBytes": 0,
+      "rustUnsafeLexemes": 7
+    }
+  ],
+  "sourceHashes": {
+    "Cargo.lock": "c82640e677c8c602c90f9ee8577a4286d52e65e621636067bf59f8b0257185fb",
+    "Cargo.toml": "9549af625d1c723930b40c78771cd23af8f040442bc3535737a574fe81d9acef",
+    "crates/application/cli/Cargo.toml": "70f2a16aad2d4b1276478039b18ed4900fd8025f8e765d5922fad2c8edeba7b1",
+    "crates/application/cli/src/main.rs": "b134169fbcf8c083c36b98a4486f0441bd586caeab405f1ee7c4a0103d21273e",
+    "tools/xtask/dependency-surface-policy.v2.json": "44bede34a68f51d3b6c7a392ab71d713f1c0cc3b0aea11b56e58ac8f3b40764b"
+  },
+  "measurement": {
+    "systemReport": "system-report.json",
+    "mimallocReports": [
+      "mimalloc-report-r1.json",
+      "mimalloc-report-r2.json"
+    ],
+    "systemBinaryBytes": 11760576,
+    "mimallocBinaryBytes": 11913968,
+    "binaryDeltaBytes": 153392,
+    "binaryDeltaFraction": 0.013042898579117213,
+    "systemPeakRssBytes": 62029824,
+    "acceptedMimallocPeakRssBytes": 145108992,
+    "peakRssDeltaBytes": 83079168,
+    "systemScalingRatio": 0.9005491218149464,
+    "mimallocScalingRatios": [
+      0.7509440703771413,
+      0.7173001495475314
+    ],
+    "acceptedMimallocStatus": "PASS"
+  },
+  "localPolicyDiagnostics": {
+    "cargoAudit": {
+      "version": "0.22.2",
+      "lockedPackageCount": 121,
+      "loadedAdvisoryCount": 1239,
+      "result": "PASS"
+    },
+    "cargoDeny": {
+      "version": "0.20.2",
+      "checks": [
+        "bans",
+        "licenses",
+        "sources"
+      ],
+      "result": "PASS"
+    },
+    "authority": "local diagnostic; public CI remains authoritative"
+  },
+  "sourceInventoryLimit": "rustUnsafeLexemes is a lexical source observation, not a semantic unsafe-block count"
+}

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -57,24 +57,70 @@ pub fn physical_alias_write_closure(
     target: &RepoPath,
     source_paths: &[RepoPath],
 ) -> Result<PhysicalAliasWriteClosure, InventoryError> {
-    let target_native = root.join(native_relative(target)?);
-    let physical_identity = physical_file_identity(&target_native)?;
-    let target_handle = same_file::Handle::from_path(&target_native)
-        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-    let mut aliases = Vec::new();
-    for source_path in source_paths {
-        let handle = same_file::Handle::from_path(root.join(native_relative(source_path)?))
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        if handle == target_handle {
-            aliases.push(source_path.clone());
+    physical_alias_write_closures(root, std::slice::from_ref(target), source_paths)?
+        .remove(target)
+        .ok_or_else(|| {
+            InventoryError::PhysicalIdentity(format!(
+                "physical alias target was not indexed: {}",
+                target.display_escaped()
+            ))
+        })
+}
+
+/// Observes all source identities once and derives every requested alias closure from that
+/// authenticated index. Source semantic inputs can include directories and physical redirects,
+/// so this intentionally uses the general identity observation rather than the regular-source
+/// capture handle. Every name is observed again before return so a changed index fails closed.
+pub fn physical_alias_write_closures(
+    root: &Path,
+    targets: &[RepoPath],
+    source_paths: &[RepoPath],
+) -> Result<BTreeMap<RepoPath, PhysicalAliasWriteClosure>, InventoryError> {
+    validate_root(root)?;
+    let mut unique_sources = source_paths.to_vec();
+    unique_sources.sort();
+    unique_sources.dedup();
+    let mut source_groups = BTreeMap::<PhysicalFileIdentity, Vec<RepoPath>>::new();
+    let mut observed_names = Vec::with_capacity(unique_sources.len() + targets.len());
+    for path in unique_sources {
+        let native = root.join(native_relative(&path)?);
+        let physical_identity = physical_file_identity(&native)?;
+        source_groups
+            .entry(physical_identity.clone())
+            .or_default()
+            .push(path.clone());
+        observed_names.push((path, native, physical_identity));
+    }
+
+    let mut unique_targets = targets.to_vec();
+    unique_targets.sort();
+    unique_targets.dedup();
+    let mut closures = BTreeMap::new();
+    for path in unique_targets {
+        let native = root.join(native_relative(&path)?);
+        let physical_identity = physical_file_identity(&native)?;
+        closures.insert(
+            path.clone(),
+            PhysicalAliasWriteClosure {
+                members: source_groups
+                    .get(&physical_identity)
+                    .cloned()
+                    .unwrap_or_default(),
+                physical_identity: physical_identity.clone(),
+            },
+        );
+        observed_names.push((path, native, physical_identity));
+    }
+
+    for (path, native, expected) in observed_names {
+        if physical_file_identity(&native)? != expected {
+            return Err(InventoryError::PhysicalIdentity(format!(
+                "physical alias path changed during observation: {}",
+                path.display_escaped()
+            )));
         }
     }
-    aliases.sort();
-    aliases.dedup();
-    Ok(PhysicalAliasWriteClosure {
-        physical_identity,
-        members: aliases,
-    })
+    Ok(closures)
 }
 
 pub fn inspect_write_target(
