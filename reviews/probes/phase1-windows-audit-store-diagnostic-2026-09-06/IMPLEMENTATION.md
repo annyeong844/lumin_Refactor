@@ -4,6 +4,8 @@ Scope: the exact approved [W3 design](DESIGN.md), frozen through its
 [review record](REVIEW.md), SHA-256
 `6d916f24a3b78e99de8b04e5164e6c0199ea30cae401dea5e1a5e93485025fa8`.
 This packet implements diagnostic observation, not a performance optimization.
+This is the retained local pre-push checkpoint; subsequent hosted results are
+bound separately in [CI-EVIDENCE.md](CI-EVIDENCE.md).
 The ordinary Windows `default / jobs=1 <= 0.75` requirement is unchanged;
 P1-60/P1-70 and REVIEW-005's remaining decisions stay open.
 

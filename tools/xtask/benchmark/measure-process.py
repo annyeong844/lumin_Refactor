@@ -144,39 +144,195 @@ def linux_process_tree() -> dict[int, int]:
     return tree
 
 
-def windows_process_tree() -> dict[int, int]:
-    from ctypes import wintypes
+class WindowsApi:
+    """One pointer-width-correct owner of the process/job observation APIs."""
 
-    class ProcessEntry(ctypes.Structure):
+    class Accounting(ctypes.Structure):
         _fields_ = [
-            ("size", wintypes.DWORD),
-            ("usage", wintypes.DWORD),
-            ("process_id", wintypes.DWORD),
-            ("default_heap_id", ctypes.POINTER(ctypes.c_ulong)),
-            ("module_id", wintypes.DWORD),
-            ("threads", wintypes.DWORD),
-            ("parent_process_id", wintypes.DWORD),
-            ("priority_base", wintypes.LONG),
-            ("flags", wintypes.DWORD),
-            ("exe_file", wintypes.WCHAR * 260),
+            ("user", ctypes.c_int64), ("kernel", ctypes.c_int64),
+            ("period_user", ctypes.c_int64), ("period_kernel", ctypes.c_int64),
+            ("faults", ctypes.c_uint32), ("total", ctypes.c_uint32),
+            ("active", ctypes.c_uint32), ("terminated", ctypes.c_uint32),
         ]
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-    invalid = ctypes.c_void_p(-1).value
-    if snapshot == invalid:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        entry = ProcessEntry()
-        entry.size = ctypes.sizeof(entry)
-        tree: dict[int, int] = {}
-        present = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
-        while present:
-            tree[int(entry.process_id)] = int(entry.parent_process_id)
-            present = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
-        return tree
-    finally:
-        kernel32.CloseHandle(snapshot)
+    class Limits(ctypes.Structure):
+        _fields_ = [
+            ("process_time", ctypes.c_int64), ("job_time", ctypes.c_int64),
+            ("flags", ctypes.c_uint32), ("min_working_set", ctypes.c_size_t),
+            ("max_working_set", ctypes.c_size_t), ("active_limit", ctypes.c_uint32),
+            ("affinity", ctypes.c_size_t), ("priority", ctypes.c_uint32),
+            ("scheduling", ctypes.c_uint32),
+        ]
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
+
+        def value(self) -> int:
+            return (self.high << 32) | self.low
+
+    class MemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("size", ctypes.c_uint32), ("faults", ctypes.c_uint32),
+            ("peak", ctypes.c_size_t), ("working_set", ctypes.c_size_t),
+            ("peak_paged", ctypes.c_size_t), ("paged", ctypes.c_size_t),
+            ("peak_nonpaged", ctypes.c_size_t), ("nonpaged", ctypes.c_size_t),
+            ("pagefile", ctypes.c_size_t), ("peak_pagefile", ctypes.c_size_t),
+        ]
+
+    def __init__(self) -> None:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        handle, boolean, dword = ctypes.c_void_p, ctypes.c_int32, ctypes.c_uint32
+        pointer = ctypes.POINTER
+        for dll, name, arguments, result in [
+            (kernel, "CreateJobObjectW", [handle, ctypes.c_wchar_p], handle),
+            (kernel, "GetCurrentProcess", [], handle),
+            (kernel, "AssignProcessToJobObject", [handle, handle], boolean),
+            (kernel, "IsProcessInJob", [handle, handle, pointer(boolean)], boolean),
+            (kernel, "QueryInformationJobObject", [handle, ctypes.c_int32, handle, dword, pointer(dword)], boolean),
+            (kernel, "GetProcessTimes", [handle] + [pointer(self.FileTime)] * 4, boolean),
+            (kernel, "TerminateJobObject", [handle, dword], boolean),
+            (kernel, "CloseHandle", [handle], boolean),
+            (psapi, "GetProcessMemoryInfo", [handle, pointer(self.MemoryCounters), dword], boolean),
+        ]:
+            function = getattr(dll, name)
+            function.argtypes, function.restype = arguments, result
+            setattr(self, name, function)
+
+    @staticmethod
+    def checked(result: object, name: str) -> None:
+        if not result:
+            error = ctypes.get_last_error()
+            raise OSError(error, f"{name}: {ctypes.FormatError(error)}")
+
+    def create(self) -> int:
+        handle = self.CreateJobObjectW(None, None)
+        self.checked(handle, "CreateJobObjectW")
+        return handle
+
+    def assign(self, job: int, process: int) -> None:
+        self.checked(self.AssignProcessToJobObject(job, process), "AssignProcessToJobObject")
+
+    def member(self, job: int, process: int) -> bool:
+        member = ctypes.c_int32()
+        self.checked(self.IsProcessInJob(process, job, ctypes.byref(member)), "IsProcessInJob")
+        return bool(member.value)
+
+    def query(self, job: int, kind: int, record: ctypes.Structure) -> None:
+        returned = ctypes.c_uint32()
+        self.checked(self.QueryInformationJobObject(
+            job, kind, ctypes.byref(record), ctypes.sizeof(record), ctypes.byref(returned)
+        ), "QueryInformationJobObject")
+        if returned.value != ctypes.sizeof(record):
+            raise RuntimeError("partial job information")
+
+    def flags(self, job: int) -> int:
+        limits = self.Limits()
+        self.query(job, 2, limits)  # JobObjectBasicLimitInformation
+        return limits.flags
+
+    def accounting(self, job: int) -> dict[str, int]:
+        record = self.Accounting()
+        self.query(job, 1, record)  # JobObjectBasicAccountingInformation
+        return {"totalProcesses": record.total, "activeProcesses": record.active,
+                "totalTerminatedProcesses": record.terminated}
+
+    def times(self, process: int) -> tuple[int, int]:
+        creation, exit_time, kernel, user = (self.FileTime() for _ in range(4))
+        self.checked(self.GetProcessTimes(process, ctypes.byref(creation), ctypes.byref(exit_time),
+                                         ctypes.byref(kernel), ctypes.byref(user)), "GetProcessTimes")
+        return creation.value(), exit_time.value()
+
+    def peak(self, process: int) -> int:
+        counters = self.MemoryCounters()
+        counters.size = ctypes.sizeof(counters)
+        self.checked(self.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.size),
+                     "GetProcessMemoryInfo")
+        if counters.peak == 0:
+            raise RuntimeError("zero process peak working set")
+        return counters.peak
+
+    def close(self, handle: int) -> None:
+        self.checked(self.CloseHandle(handle), "CloseHandle")
+
+    def terminate(self, job: int) -> None:
+        self.checked(self.TerminateJobObject(job, 1), "TerminateJobObject")
+
+
+def validate_windows_observation(record: dict[str, object], *, allow_children: bool = False) -> None:
+    before, after = record["before"], record["after"]
+    if (before != {"totalProcesses": 1, "activeProcesses": 1, "totalTerminatedProcesses": 0}
+            or record["limitFlagsBefore"] != 0 or record["limitFlagsAfter"] != 0
+            or not record["helperInJob"] or not record["processInJob"]
+            or not 0 < record["helperProcessId"] <= 0xFFFFFFFF
+            or not 0 < record["processId"] <= 0xFFFFFFFF
+            or record["helperProcessId"] == record["processId"]
+            or not 0 < record["helperCreationTime100ns"] <= record["processCreationTime100ns"]
+            <= record["processExitTime100ns"] <= 0xFFFFFFFFFFFFFFFF
+            or not 2 <= after["totalProcesses"] <= 0xFFFFFFFF
+            or not 1 <= after["activeProcesses"] <= after["totalProcesses"]
+            or after["totalTerminatedProcesses"] != 0):
+        raise RuntimeError("contradictory Windows process observation")
+    if not allow_children and after["totalProcesses"] != 2:
+        raise RuntimeError(f"measured product launched analysis child processes: job total {after['totalProcesses']}")
+
+
+class WindowsJob:
+    def __init__(self, api: WindowsApi | None = None) -> None:
+        self.api = api if api is not None else WindowsApi()
+        self.handle = None
+        self.confirmed = False
+        self.record = {"schemaVersion": "lumin.windows-process-observation.v1",
+                       "method": "private-inherited-job.v1", "helperProcessId": os.getpid()}
+
+    def admit(self) -> None:
+        self.handle = self.api.create()
+        helper = self.api.GetCurrentProcess()
+        self.api.assign(self.handle, helper)
+        self.confirmed = self.api.member(self.handle, helper)
+        if not self.confirmed:
+            raise RuntimeError("measurement helper is not in its private job")
+        self.record.update(helperInJob=True, helperCreationTime100ns=self.api.times(helper)[0],
+                           limitFlagsBefore=self.api.flags(self.handle), before=self.api.accounting(self.handle))
+        if (self.record["helperCreationTime100ns"] == 0 or self.record["limitFlagsBefore"] != 0
+                or self.record["before"] != {"totalProcesses": 1, "activeProcesses": 1,
+                                            "totalTerminatedProcesses": 0}):
+            raise RuntimeError("invalid private job before product launch")
+
+    def bind(self, process: subprocess.Popen[bytes]) -> None:
+        handle = int(process._handle)
+        self.record.update(processId=process.pid, processCreationTime100ns=self.api.times(handle)[0],
+                           processInJob=self.api.member(self.handle, handle))
+        if not self.record["processInJob"]:
+            raise RuntimeError("measured product did not inherit its private job")
+
+    def finish(self, process: subprocess.Popen[bytes], output: Path) -> None:
+        creation, exit_time = self.api.times(int(process._handle))
+        if creation != self.record["processCreationTime100ns"]:
+            raise RuntimeError("held product creation time changed")
+        self.record.update(processExitTime100ns=exit_time, limitFlagsAfter=self.api.flags(self.handle),
+                           after=self.api.accounting(self.handle))
+        write_new(output.with_name("windows-process-observation.json"), self.record)
+        validate_windows_observation(self.record)
+
+    def close(self) -> None:
+        if self.handle is not None:
+            self.api.close(self.handle)
+            self.handle = None
+
+    def abort(self, error: BaseException) -> None:
+        # A private helper is intentionally terminated too. Flush diagnostics first;
+        # do not claim that asynchronous subtree cleanup has completed.
+        try:
+            print(f"benchmark observer failed: {error}; private-job cleanup "
+                  + ("requested" if self.confirmed else "not authorized"), file=sys.stderr, flush=True)
+        finally:
+            if self.confirmed and self.handle is not None:
+                try:
+                    self.api.terminate(self.handle)
+                except OSError as cleanup_error:
+                    print(f"private-job cleanup unknown: {cleanup_error}", file=sys.stderr, flush=True)
+            self.close()
 
 
 def descendants(root: int, tree: dict[int, int]) -> set[int]:
@@ -187,35 +343,6 @@ def descendants(root: int, tree: dict[int, int]) -> set[int]:
         found.update(next_frontier)
         frontier = next_frontier
     return found
-
-
-def windows_peak_working_set(process: subprocess.Popen[bytes]) -> int:
-    from ctypes import wintypes
-
-    class ProcessMemoryCounters(ctypes.Structure):
-        _fields_ = [
-            ("size", wintypes.DWORD),
-            ("page_fault_count", wintypes.DWORD),
-            ("peak_working_set_size", ctypes.c_size_t),
-            ("working_set_size", ctypes.c_size_t),
-            ("quota_peak_paged_pool_usage", ctypes.c_size_t),
-            ("quota_paged_pool_usage", ctypes.c_size_t),
-            ("quota_peak_non_paged_pool_usage", ctypes.c_size_t),
-            ("quota_non_paged_pool_usage", ctypes.c_size_t),
-            ("pagefile_usage", ctypes.c_size_t),
-            ("peak_pagefile_usage", ctypes.c_size_t),
-        ]
-
-    counters = ProcessMemoryCounters()
-    counters.size = ctypes.sizeof(counters)
-    if not ctypes.WinDLL("psapi", use_last_error=True).GetProcessMemoryInfo(
-        int(process._handle), ctypes.byref(counters), counters.size
-    ):
-        error = ctypes.get_last_error()
-        if process.poll() is None:
-            raise ctypes.WinError(error)
-        return 0
-    return int(counters.peak_working_set_size)
 
 
 def minimal_environment() -> dict[str, str]:
@@ -238,6 +365,20 @@ def measure(args: argparse.Namespace) -> None:
     if not command:
         raise RuntimeError("measurement requires a product command after --")
 
+    job = WindowsJob() if os.name == "nt" else None
+    try:
+        if job is not None:
+            job.admit()
+        measure_in_job(args, command, job)
+        if job is not None:
+            job.close()
+    except BaseException as error:
+        if job is not None:
+            job.abort(error)
+        raise
+
+
+def measure_in_job(args: argparse.Namespace, command: list[str], job: WindowsJob | None) -> None:
     child_pids: set[int] = set()
     peak_windows = 0
     stop = threading.Event()
@@ -252,33 +393,48 @@ def measure(args: argparse.Namespace) -> None:
             stderr=stderr,
         )
 
+        errors: list[BaseException] = []
+
         def observe() -> None:
             nonlocal peak_windows
-            while not stop.is_set():
-                tree = windows_process_tree() if os.name == "nt" else linux_process_tree()
-                child_pids.update(descendants(process.pid, tree))
-                if os.name == "nt":
-                    peak_windows = max(peak_windows, windows_peak_working_set(process))
-                stop.wait(0.001)
+            try:
+                while not stop.is_set():
+                    if job is not None:
+                        peak_windows = max(peak_windows, job.api.peak(int(process._handle)))
+                    else:
+                        child_pids.update(descendants(process.pid, linux_process_tree()))
+                    stop.wait(0.001)
+            except BaseException as error:
+                errors.append(error)
 
         observer = threading.Thread(target=observe, name="lumin-process-observer", daemon=True)
-        observer.start()
-        exit_code = process.wait()
-        elapsed = time.perf_counter_ns() - started
-        stop.set()
-        observer.join()
-        if os.name == "nt":
-            peak_rss = max(peak_windows, windows_peak_working_set(process))
-            rss_source = "GetProcessMemoryInfo.PeakWorkingSetSize"
-        else:
-            import resource
+        try:
+            if job is not None:
+                job.bind(process)
+            observer.start()
+            exit_code = process.wait()
+            elapsed = time.perf_counter_ns() - started
+            stop.set()
+            observer.join()
+            if errors:
+                raise RuntimeError(f"process observer thread failed: {errors[0]}") from errors[0]
+            if job is not None:
+                peak_rss = max(peak_windows, job.api.peak(int(process._handle)))
+                rss_source = "GetProcessMemoryInfo.PeakWorkingSetSize"
+                job.finish(process, args.output)
+            else:
+                import resource
 
-            peak_rss = int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss) * 1024
-            rss_source = "wait4-rusage-ru_maxrss-kib"
-        stdout.flush()
-        stderr.flush()
-        os.fsync(stdout.fileno())
-        os.fsync(stderr.fileno())
+                peak_rss = int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss) * 1024
+                rss_source = "wait4-rusage-ru_maxrss-kib"
+        finally:
+            stop.set()
+            if observer.ident is not None:
+                observer.join()
+            stdout.flush()
+            stderr.flush()
+            os.fsync(stdout.fileno())
+            os.fsync(stderr.fileno())
 
     measurement = {
         "schemaVersion": SCHEMA,

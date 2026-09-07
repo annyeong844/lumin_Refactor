@@ -273,6 +273,11 @@ jobs:
           "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
           "PINNED_CARGO_CLIPPY=$clippy" >> $env:GITHUB_ENV
 
+      - name: Test Windows benchmark process observer
+        if: ${{ matrix.os == 'windows-2022' }}
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/benchmark/test_measure_process.py'
+
       - name: Lint all targets
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy --workspace --all-targets --locked -- -D warnings'

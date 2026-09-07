@@ -1249,6 +1249,25 @@ fn validate_bootstrap_test_job(jobs: &BTreeMap<String, String>, violations: &mut
         violations
             .push("benchmark observer tests must run once in the bootstrap test job".to_owned());
     }
+    let windows_step = concat!(
+        "      - name: Test Windows benchmark process observer\n",
+        "        if: ${{ matrix.os == 'windows-2022' }}\n",
+        "        shell: pwsh\n",
+        "        run: '& \"$env:PINNED_PYTHON\" -I -S tools/xtask/benchmark/test_measure_process.py'",
+    );
+    if !jobs.get("platform").is_some_and(|block| {
+        block.contains(windows_step)
+            && block
+                .lines()
+                .filter(|line| command_text(line) == BENCHMARK_TEST_COMMAND)
+                .count()
+                == 1
+    }) {
+        violations.push(
+            "Windows benchmark observer tests must execute in the required platform lane"
+                .to_owned(),
+        );
+    }
 }
 
 fn validate_no_nested_dependency_admission(root: &Path, result: &mut CargoBootstrapResult) {
@@ -1290,6 +1309,37 @@ mod tests {
     fn checked_workflow_has_no_routing_violation() -> Result<(), Box<dyn std::error::Error>> {
         let found = violations(&workflow()?);
         assert!(found.is_empty(), "{found:#?}");
+        Ok(())
+    }
+
+    #[test]
+    fn windows_observer_execution_cannot_be_removed_or_moved_to_linux()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let original = workflow()?;
+        for replacement in [
+            "        if: false",
+            "        if: ${{ matrix.os == 'ubuntu-24.04' }}",
+        ] {
+            let changed = original.replace(
+                "      - name: Test Windows benchmark process observer\n        if: ${{ matrix.os == 'windows-2022' }}",
+                &format!("      - name: Test Windows benchmark process observer\n{replacement}"),
+            );
+            assert_ne!(changed, original);
+            assert!(
+                violations(&changed)
+                    .iter()
+                    .any(|error| error.contains("Windows benchmark observer tests"))
+            );
+        }
+        let changed = original.replace(
+            "      - name: Test Windows benchmark process observer",
+            "      - name: Test something else",
+        );
+        assert!(
+            violations(&changed)
+                .iter()
+                .any(|error| error.contains("Windows benchmark observer tests"))
+        );
         Ok(())
     }
 

@@ -25,17 +25,15 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI packet](probes/phase1-windows-audit-execution-diagnostic-2026-09-05/CI-EVIDENCE.md)
-on head `062964192a1d3f16f5b7739f0d98eb85ac5bef4d` / merge checkout
-`e126a73d5af15d77e9bfd454fd431e9b4ead6f89` passes the functional, crash,
-determinism, and native Linux package checks. Windows still misses only the
-numeric scaling target: default-four-worker median `3,116,713,800 ns` versus
-`3,169,005,900 ns` for `jobs=1`, ratio `0.9834988947164788`. Native Linux
-completes all seven modes with ratio `0.671960372272139` and no numeric miss.
-The packet retains report/capture hashes, exact build identities, and the
-successful but nonauthoritative W2 diagnostic. Neither it nor earlier local
-reports establishes the outcome of subsequent product changes. Fresh blocking
-measurements remain required.
+The [latest completed public CI packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
+on head `a0f5032dfa19dcfc3546f17ff1a4b13e6b7b42d6` / merge checkout
+`15a4de8ffc89cad8cb67d125cc078d9807b4f5ef` passes both builds and staged
+binary/adapter behavior probes, but fails both blocking benchmark lanes.
+Windows has an invalid child-process observation and no complete numeric
+report. Linux completes all cells but its scaling ratio `0.8679689002868833`
+exceeds `0.75`. The separately successful W3 diagnostic substitutes for neither
+failure. Fresh blocking measurements remain required; earlier passes do not
+carry forward to this source/host.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It
@@ -90,6 +88,15 @@ reviews pass for its corrected exact candidate; the owner approved freezing
 and implementing that hash on 2026-09-06. Its review record binds the unchanged
 candidate bytes. W3 grants no performance-change authority. W2's approved bytes
 and the ordinary budget stay unchanged.
+
+The [W4 observer correction](probes/phase1-windows-process-observer-2026-09-07/DESIGN.md)
+is frozen through its [exact design review](probes/phase1-windows-process-observer-2026-09-07/REVIEW.md).
+It replaces Windows PID-only ancestry with private inherited-job cumulative
+accounting and a strict, archived lifetime receipt. Its scope is measurement
+correctness, not product optimization, old-cell reclassification, Linux scaling,
+or permanent run/gate metrics. Its [local implementation evidence](probes/phase1-windows-process-observer-2026-09-07/IMPLEMENTATION.md)
+does not replace public CI; the next matrix requires new captures and separate
+push authority.
 
 ## Proposed WSL `/mnt` disposition
 

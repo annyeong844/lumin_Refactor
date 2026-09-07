@@ -266,6 +266,9 @@ mod tests {
                 fs::read(capture.join("stdout")).map_err(|error| error.to_string())?;
             let stderr_before =
                 fs::read(capture.join("stderr")).map_err(|error| error.to_string())?;
+            #[cfg(windows)]
+            let companion_before = fs::read(capture.join("windows-process-observation.json"))
+                .map_err(|error| error.to_string())?;
             archive.finish(result.as_ref().err().map(String::as_str))?;
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
             assert_eq!(
@@ -284,6 +287,21 @@ mod tests {
                 manifest["captures"]["cell/stdout"]["sha256"],
                 crate::benchmark::sha256_hex(&stdout_before)
             );
+            #[cfg(windows)]
+            {
+                assert_eq!(
+                    fs::read(capture.join("windows-process-observation.json"))
+                        .map_err(|error| error.to_string())?,
+                    companion_before
+                );
+                assert_eq!(
+                    manifest["captures"]["cell/windows-process-observation.json"],
+                    serde_json::json!({
+                        "bytes": companion_before.len(),
+                        "sha256": crate::benchmark::sha256_hex(&companion_before),
+                    })
+                );
+            }
             assert_eq!(
                 manifest["cells"]["cell"]["status"],
                 if mode == "numeric-miss" {

@@ -1,9 +1,13 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::Value;
+
+#[cfg(test)]
+mod tests;
+mod windows_observation;
 
 pub(super) struct ProcessMeasurement {
     pub(super) elapsed_nanoseconds: u64,
@@ -164,13 +168,21 @@ fn measure_product_mode(
         .arg(binary)
         .args(arguments);
     let helper = command
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| format!("cannot launch benchmark process helper: {error}"))?;
+    let helper_pid = helper.id();
+    let helper = helper
+        .wait_with_output()
+        .map_err(|error| format!("cannot wait for benchmark process helper: {error}"))?;
     super::archive::write_bytes(&capture.join("helper.stdout"), &helper.stdout)?;
     super::archive::write_bytes(&capture.join("helper.stderr"), &helper.stderr)?;
     require_helper_success(&helper, "benchmark process measurement")?;
 
     let raw = read_measurement(&metrics_path, diagnostic)?;
+    windows_observation::validate_capture(capture, helper_pid, &raw, diagnostic, cfg!(windows))?;
     let schema = if diagnostic {
         "lumin.phase1-process-measurement.v2"
     } else {
