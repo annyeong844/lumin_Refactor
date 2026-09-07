@@ -11,6 +11,8 @@ use serde_json::Value;
 
 mod support;
 
+#[path = "write_gate/barrier_child.rs"]
+mod barrier_child;
 #[path = "write_gate/immutable_opening_delta.rs"]
 mod immutable_opening_delta;
 #[path = "write_gate/mixed_vue.rs"]
@@ -697,37 +699,16 @@ fn final_promotion_rejects_a_late_semantic_input(
         "--jobs",
         "1",
     ];
-    let mut child = lumin_command_with_args(root.path(), &arguments)?
+    let mut command = lumin_command_with_args(root.path(), &arguments)?;
+    command
         .env(
             "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
         )
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let started = Instant::now();
-    let (mut stream, peer) = loop {
-        match listener.accept() {
-            Ok(accepted) => break accepted,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if let Some(status) = child.try_wait()? {
-                    return Err(std::io::Error::other(format!(
-                        "pre-write exited before semantic-input barrier: {status}"
-                    ))
-                    .into());
-                }
-                if started.elapsed() >= Duration::from_secs(30) {
-                    return Err(std::io::Error::other(
-                        "pre-write did not reach the semantic-input barrier",
-                    )
-                    .into());
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => return Err(error.into()),
-        }
-    };
+        .stderr(Stdio::piped());
+    let mut child = barrier_child::BarrierChild::spawn(&mut command, "pre-write semantic-input")?;
+    let (mut stream, peer) = child.accept(&listener)?;
     assert!(peer.ip().is_loopback());
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;

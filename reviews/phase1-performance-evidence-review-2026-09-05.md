@@ -113,8 +113,12 @@ are complete. Both controls and candidates pass locally under the eight-worker
 policy, with little cold-audit change and mixed changes in other modes. This is
 not evidence that the hosted four-worker misses are fixed. Its
 [initial hosted execution](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
-retains both numeric misses and the separate test-routing failure. Fresh blocking
-CI evidence after the routing correction remains required before acceptance.
+retains both numeric misses and the separate test-routing failure. The
+[routing follow-up and integration diagnosis](probes/phase1-latest-index-noop-2026-09-07/INTEGRATION-DIAGNOSTICS.md)
+records passing store partitions and Linux scaling, the still-failing Windows
+scaling budget, and two unresolved hosted gate-barrier arrivals. The local
+reproduction passes do not establish a cause or invalidate the hosted failures;
+fresh blocking CI evidence remains required before acceptance.
 
 ## Proposed WSL `/mnt` disposition
 

@@ -171,12 +171,13 @@ Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
 The latest completed CI matrices have valid process/semantic observations and
-passing package/adapter behavior on both platforms, but both miss scaling:
-Windows `0.8761661662571489`, native Linux `1.666355334361666`, against `0.75`.
-The same run exposed an omitted Windows publication-unit-test partition; its
-bounded routing correction and the complete measurement evidence are routed
+passing package/adapter behavior on both platforms. Windows scaling still misses
+at `0.8827104102678495` against `0.75`; native Linux passes at
+`0.7025425044896499`. All six Windows store-test partitions pass after the routing
+correction, but two Windows integration gate-barrier arrivals remain unresolved.
+The complete measurement evidence and scoped integration diagnosis are routed
 through REVIEW-005. Eight-worker local passes do not resolve the four-worker
-hosted misses. New blocking CI evidence, permanent runtime worker/stage
+hosted Windows miss. New blocking CI evidence, permanent runtime worker/stage
 observations, allocator cost approval, and the WSL `/mnt` diagnostic disposition
 remain open.
 
