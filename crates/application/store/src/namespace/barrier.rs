@@ -13,6 +13,7 @@ const RELEASE_FRAME: &[u8; 8] = b"release\n";
 const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
+const BEFORE_LATEST_INDEX_ABORT: &str = "before-latest-index-abort";
 const BEFORE_MIGRATION_STORE_COMMIT: &str = "before-migration-store-commit";
 const BEFORE_LATEST_REPLACE: &str = "before-latest-replace";
 const BEFORE_RETENTION_COMMIT: &str = "before-retention-commit";
@@ -31,6 +32,10 @@ pub(crate) fn wait_after_complete_validation() -> Result<(), StoreError> {
 
 pub(crate) fn wait_before_store_commit() -> Result<(), StoreError> {
     wait(BEFORE_STORE_COMMIT)
+}
+
+pub(crate) fn wait_before_latest_index_abort() -> Result<(), StoreError> {
+    wait(BEFORE_LATEST_INDEX_ABORT)
 }
 
 pub(crate) fn wait_before_migration_store_commit() -> Result<(), StoreError> {
@@ -120,6 +125,7 @@ fn is_supported_stage(stage: &str) -> bool {
         AFTER_PRE_ACQUIRE_VALIDATION
             | AFTER_COMPLETE_VALIDATION
             | BEFORE_STORE_COMMIT
+            | BEFORE_LATEST_INDEX_ABORT
             | BEFORE_MIGRATION_STORE_COMMIT
             | BEFORE_LATEST_REPLACE
             | BEFORE_RETENTION_COMMIT

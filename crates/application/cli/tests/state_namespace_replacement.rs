@@ -13,6 +13,7 @@ use support::{ProcessResult, assert_status, field, run};
 const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
+const BEFORE_LATEST_INDEX_ABORT: &str = "before-latest-index-abort";
 const BEFORE_MIGRATION_STORE_COMMIT: &str = "before-migration-store-commit";
 const BEFORE_LATEST_REPLACE: &str = "before-latest-replace";
 const BEFORE_RETENTION_COMMIT: &str = "before-retention-commit";
@@ -42,6 +43,10 @@ fn lock_replacement_never_forms_two_accepted_guard_domains()
     with_context(
         "pre-replace latest-pointer state-directory replacement",
         latest_pointer_replace_uses_held_state_directory(),
+    )?;
+    with_context(
+        "unchanged latest-index store replacement",
+        unchanged_latest_index_rejects_replacement_of_the_compared_store(),
     )?;
     with_context(
         "pre-commit retention lock replacement",
@@ -135,6 +140,78 @@ fn copied_managed_parents_fail_closed_before_admission() -> Result<(), Box<dyn s
     fs::remove_dir(&cache)?;
     fs::rename(authentic, cache)?;
     assert_latest_run(root.path(), &baseline_run)?;
+    Ok(())
+}
+
+#[test]
+fn unchanged_latest_index_rejects_replacement_of_the_compared_store()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let baseline_run = initialize(root.path())?;
+    let canonical = root.path().join(".lumin/lifecycle.store");
+    let durable_before = durable_namespace_snapshot(root.path())?;
+    let logical_before = lumin_engine::complete_logical_store_observation_for_test(root.path())?;
+    // A closed, byte-identical database admits the same header and receipt set.
+    // Only its different physical identity distinguishes this replacement.
+    let mut replacement = FileReplacement::prepare(
+        &canonical,
+        root.path().join("lifecycle.store.noop-prepared"),
+        root.path().join("lifecycle.store.noop-authentic"),
+    )?;
+    let foreign_before = (
+        physical_identity(&replacement.prepared)?,
+        fs::read(&replacement.prepared)?,
+    );
+    assert_ne!(foreign_before.0, physical_identity(&canonical)?);
+    let barrier = NamespaceBarrier::new(BEFORE_LATEST_INDEX_ABORT)?;
+    let mut overview = barrier.spawn(root.path(), &["overview"])?;
+    let permit = barrier.accept(&mut overview)?;
+    let replaced = replacement.activate()?;
+    assert!(
+        replaced || cfg!(windows),
+        "Linux must reach the exact store-swap turn"
+    );
+    permit.release()?;
+    let output = overview.finish()?;
+    if replaced {
+        assert_integrity_failure(&output);
+        assert!(
+            output
+                .stderr
+                .contains("lifecycle.store physical identity changed"),
+            "the original held store must reject an otherwise valid replacement: {}",
+            output.stderr
+        );
+    } else {
+        // Windows may prevent the rename through the still-open backend handle.
+        assert_status(&output, 0);
+        assert_eq!(json(&output.stdout)?["scope"]["id"], baseline_run);
+    }
+    let foreign_path = if replaced {
+        &canonical
+    } else {
+        &replacement.prepared
+    };
+    assert_eq!(physical_identity(foreign_path)?, foreign_before.0);
+    assert!(
+        fs::read(foreign_path)? == foreign_before.1,
+        "foreign store bytes changed"
+    );
+    replacement.restore()?;
+    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
+    assert_eq!(
+        lumin_engine::complete_logical_store_observation_for_test(root.path())?,
+        logical_before
+    );
+    let recovered = run_success(root.path(), &["overview"])?;
+    assert_eq!(json(&recovered.stdout)?["scope"]["id"], baseline_run);
+    let retry = run_success(root.path(), &["overview"])?;
+    assert_eq!(retry.stdout, recovered.stdout);
+    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
+    assert_eq!(
+        lumin_engine::complete_logical_store_observation_for_test(root.path())?,
+        logical_before
+    );
     Ok(())
 }
 

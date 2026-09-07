@@ -15,6 +15,7 @@ use std::fs;
 use std::ops::Deref;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fs2::FileExt;
 use lumin_model::{RepositoryBinding, RepositoryId};
@@ -107,6 +108,7 @@ pub(super) struct NamespaceGuard {
     lock: HeldEntry,
     managed_parents: Vec<HeldManagedParent>,
     cache_evictions: HeldCacheEvictionParent,
+    backend_access_rejected: AtomicBool,
 }
 
 struct HeldManagedParent {
@@ -536,27 +538,28 @@ impl NamespaceState {
         if let (Some(profile), Some((_, exit))) = (profile.as_deref_mut(), phases) {
             profile.begin(exit);
         }
-        let final_validation = if !admitted {
-            // A refused schema must not be reopened by redb in writable mode. Even opening and
-            // closing that handle can change its recovery metadata without a user transaction.
-            guard.validate_bound_entries()
-        } else {
-            match purpose {
-                LockPurpose::Ordinary | LockPurpose::Admission => {
-                    migration::require_idle(&guard).and_then(|()| guard.validate_complete())
+        let result = result.and_then(|value| guard.require_backend_access().map(|()| value));
+        let final_validation =
+            if !admitted || guard.backend_access_rejected.load(Ordering::SeqCst) {
+                // A refused schema or rejected original store must not be reopened by redb in
+                // writable mode. Even opening/closing changes private backend recovery metadata.
+                guard.validate_bound_entries()
+            } else {
+                match purpose {
+                    LockPurpose::Ordinary | LockPurpose::Admission => {
+                        migration::require_idle(&guard).and_then(|()| guard.validate_complete())
+                    }
+                    LockPurpose::Migration => guard.validate_bound_entries(),
+                    #[cfg(any(
+                        test,
+                        feature = "logical-store-snapshot-test",
+                        feature = "namespace-test-crash",
+                        feature = "retention-test-crash"
+                    ))]
+                    LockPurpose::Observation => migration::require_idle(&guard)
+                        .and_then(|()| guard.validate_bound_entries()),
                 }
-                LockPurpose::Migration => guard.validate_bound_entries(),
-                #[cfg(any(
-                    test,
-                    feature = "logical-store-snapshot-test",
-                    feature = "namespace-test-crash",
-                    feature = "retention-test-crash"
-                ))]
-                LockPurpose::Observation => {
-                    migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
-                }
-            }
-        };
+            };
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         let result = combine_lock_results(result, final_validation, unlock);
         #[cfg(feature = "audit-store-test-profile")]
@@ -712,9 +715,23 @@ impl NamespaceGuard {
             lock,
             managed_parents,
             cache_evictions,
+            backend_access_rejected: AtomicBool::new(false),
         };
         guard.validate_bound_entries()?;
         Ok(guard)
+    }
+
+    pub(crate) fn reject_backend_access(&self) {
+        self.backend_access_rejected.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn require_backend_access(&self) -> Result<(), StoreError> {
+        if self.backend_access_rejected.load(Ordering::SeqCst) {
+            return Err(StoreError::Integrity(
+                "lifecycle backend access was rejected for this namespace guard".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn mutate<T>(

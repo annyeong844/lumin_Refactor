@@ -106,9 +106,9 @@ inapplicable, not treated as Rust evidence.
 
 ## Remaining boundary
 
-The [actual W3 CI packet](../phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
-still has an invalid Windows cell and an independent Linux scaling miss. This
-correction does not explain those four historic PIDs or improve a product budget.
-Fresh blocking matrices require a separately authorized push and new artifacts.
+The [actual W4 CI packet](CI-EVIDENCE.md) now has complete valid observations on
+both platforms. Native Linux passes its numeric matrix; Windows still misses
+scaling. This correction neither explains the four historic W3 PIDs nor proves
+a product speedup. Any product change requires new blocking artifacts.
 P1-60/P1-70, permanent metrics, allocator approval, and `/mnt` disposition remain
 open. The user's original worktree changes remain untouched.

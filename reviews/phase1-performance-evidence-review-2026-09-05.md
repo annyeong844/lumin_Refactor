@@ -25,15 +25,15 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
-on head `a0f5032dfa19dcfc3546f17ff1a4b13e6b7b42d6` / merge checkout
-`15a4de8ffc89cad8cb67d125cc078d9807b4f5ef` passes both builds and staged
-binary/adapter behavior probes, but fails both blocking benchmark lanes.
-Windows has an invalid child-process observation and no complete numeric
-report. Linux completes all cells but its scaling ratio `0.8679689002868833`
-exceeds `0.75`. The separately successful W3 diagnostic substitutes for neither
-failure. Fresh blocking measurements remain required; earlier passes do not
-carry forward to this source/host.
+The [latest completed public CI packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
+on head `d63281bb613a907219f3e78348f29f7c777f102a` / merge checkout
+`c38c5e07bc17a974678e6a130eee3aff26be2ea8` passes both builds and staged
+binary/adapter behavior probes. Both platforms complete all 34 benchmark cells
+with valid semantic truth and process observations. Native Linux passes its
+numeric matrix; Windows misses scaling at `0.842191828905966` against `0.75`,
+so its package job and Required remain failed. The separate diagnostic is not
+budget authority. The [earlier invalid/missed W3 packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
+remains retained and is not reclassified by this new measurement.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It
@@ -94,9 +94,21 @@ is frozen through its [exact design review](probes/phase1-windows-process-observ
 It replaces Windows PID-only ancestry with private inherited-job cumulative
 accounting and a strict, archived lifetime receipt. Its scope is measurement
 correctness, not product optimization, old-cell reclassification, Linux scaling,
-or permanent run/gate metrics. Its [local implementation evidence](probes/phase1-windows-process-observer-2026-09-07/IMPLEMENTATION.md)
-does not replace public CI; the next matrix requires new captures and separate
-push authority.
+or permanent run/gate metrics. Its [actual hosted evidence](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
+validates all 48 Windows ordinary/diagnostic lifetime receipts; the remaining
+Windows numeric miss is independent of that observer correctness result.
+
+The bounded product candidate is [W5 unchanged latest-index synchronization](probes/phase1-latest-index-noop-2026-09-07/DESIGN.md),
+with its [exact scoped review](probes/phase1-latest-index-noop-2026-09-07/REVIEW.md).
+It removes only redundant derived-index commits while preserving the original
+held-store, namespace, generation and receipt validations. It does not change
+backend lifetime or budgets and is not promised to close the scaling gap.
+Its [local implementation checks](probes/phase1-latest-index-noop-2026-09-07/IMPLEMENTATION.md)
+and [four fresh control/candidate packets](probes/phase1-latest-index-noop-2026-09-07/MEASUREMENTS.md)
+are complete. Both controls and candidates pass locally under the eight-worker
+policy, with little cold-audit change and mixed changes in other modes. This is
+not evidence that the hosted four-worker Windows miss is fixed. Fresh blocking
+CI evidence for the candidate remains required before acceptance.
 
 ## Proposed WSL `/mnt` disposition
 

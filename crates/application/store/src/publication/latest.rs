@@ -1,18 +1,23 @@
 use std::collections::BTreeMap;
 
 use lumin_model::{AttemptId, AttemptStatus, RunId};
-use redb::TableError;
+use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
 use super::files;
 use super::{AttemptEnvelope, LatestRunSnapshot};
-use crate::namespace::{NamespaceGuard, entry_exists, records::ManagedStateParentKind};
+use crate::namespace::{
+    NamespaceGuard, database::StoreWriteTransaction, entry_exists, records::ManagedStateParentKind,
+};
 use crate::{
     POINTERS, RepositoryStore, StoreError, backend_error, read_catalog_record, read_live_run,
 };
 
 const LATEST_SCHEMA: &str = "lumin-latest.v1";
 const LATEST_NAME: &str = "latest.json";
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -498,10 +503,40 @@ fn derive_legacy_document(
 }
 
 fn sync_index(guard: &NamespaceGuard, latest: &LatestPointer) -> Result<(), StoreError> {
+    sync_index_with_commit(guard, latest, |write| guard.commit(write))
+}
+
+fn sync_index_with_commit(
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    commit: impl FnOnce(StoreWriteTransaction<'_, '_>) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
     let database = guard.open_database()?;
     let write = database.begin_write()?;
     {
         let mut table = write.open_table(POINTERS).map_err(backend_error)?;
+        let attempt_matches = table
+            .get("latest-attempt")
+            .map_err(backend_error)?
+            .as_ref()
+            .map(|value| value.value())
+            == latest
+                .latest_attempt
+                .as_ref()
+                .map(|pointer| pointer.attempt_id.as_str().as_bytes());
+        let completed_matches = table
+            .get("latest-completed")
+            .map_err(backend_error)?
+            .as_ref()
+            .map(|value| value.value())
+            == latest
+                .latest_completed
+                .as_ref()
+                .map(|pointer| pointer.run_id.as_str().as_bytes());
+        if attempt_matches && completed_matches {
+            drop(table);
+            return write.abort();
+        }
         match &latest.latest_attempt {
             Some(pointer) => {
                 table
@@ -523,7 +558,7 @@ fn sync_index(guard: &NamespaceGuard, latest: &LatestPointer) -> Result<(), Stor
             }
         }
     }
-    guard.commit(write)
+    commit(write)
 }
 
 struct MergeResult {

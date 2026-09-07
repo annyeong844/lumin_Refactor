@@ -170,11 +170,13 @@ checkout.
 Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
-The latest completed Windows CI matrix is invalid at child-process observation;
-native Linux completes its matrix but misses scaling. The reviewed Windows
-observer correction is routed through REVIEW-005. Fresh blocking measurements,
-permanent runtime worker/stage observations, allocator cost approval, and the WSL `/mnt`
-diagnostic disposition remain open.
+The latest completed CI matrices have valid process/semantic observations on both
+platforms. Native Linux passes; Windows still misses scaling (`0.842191828905966`
+against `0.75`). The bounded latest-index no-op candidate's local correctness,
+package, and control/candidate measurement evidence is routed through REVIEW-005.
+Those eight-worker local passes do not resolve the four-worker hosted miss.
+New blocking CI evidence, permanent runtime worker/stage observations, allocator
+cost approval, and the WSL `/mnt` diagnostic disposition remain open.
 
 - [ ] Run the blocking Windows and native-Linux benchmark matrix against the
   completed public binary and frozen fixtures.

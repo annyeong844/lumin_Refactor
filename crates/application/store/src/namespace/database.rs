@@ -37,6 +37,7 @@ enum CommitTestBoundary {
 
 impl NamespaceGuard {
     pub(crate) fn open_database(&self) -> Result<StoreDatabase<'_>, StoreError> {
+        self.require_backend_access()?;
         self.validate_bound_entries()?;
         let entry = HeldEntry::open(
             &self.state.state_dir.join("lifecycle.store"),
@@ -96,6 +97,7 @@ impl NamespaceGuard {
         transaction: StoreWriteTransaction<'_, '_>,
         test_boundary: CommitTestBoundary,
     ) -> Result<(), StoreError> {
+        self.require_backend_access()?;
         let StoreWriteTransaction { write, database } = transaction;
         if !std::ptr::eq(self, database.guard) {
             return Err(StoreError::Integrity(
@@ -150,6 +152,7 @@ impl<'guard> StoreDatabase<'guard> {
     }
 
     pub(crate) fn begin_read(&self) -> Result<StoreReadTransaction<'_, 'guard>, StoreError> {
+        self.guard.require_backend_access()?;
         let read = self.database.begin_read().map_err(backend_error)?;
         verify_validation_receipt_set_read(&read, &self.guard.state.binding, self.generation)?;
         Ok(StoreReadTransaction {
@@ -159,6 +162,7 @@ impl<'guard> StoreDatabase<'guard> {
     }
 
     pub(crate) fn begin_write(&self) -> Result<StoreWriteTransaction<'_, 'guard>, StoreError> {
+        self.guard.require_backend_access()?;
         let write = self.database.begin_write().map_err(backend_error)?;
         verify_store_header_write(&write, &self.guard.state.binding, self.generation)?;
         Ok(StoreWriteTransaction {
@@ -207,6 +211,28 @@ impl Deref for StoreReadTransaction<'_, '_> {
 
     fn deref(&self) -> &Self::Target {
         &self.read
+    }
+}
+
+impl StoreWriteTransaction<'_, '_> {
+    pub(crate) fn abort(self) -> Result<(), StoreError> {
+        let Self { write, database } = self;
+        let result = (|| {
+            database.guard.require_backend_access()?;
+            database.guard.validate_bound_entries()?;
+            database.validate_current()?;
+            #[cfg(feature = "namespace-test-crash")]
+            super::barrier::wait_before_latest_index_abort()?;
+            write.abort().map_err(backend_error)?;
+            database.guard.validate_bound_entries()?;
+            database.validate_current()?;
+            database.validate_receipt_set_current()?;
+            database.guard.validate_bound_entries()
+        })();
+        if result.is_err() {
+            database.guard.reject_backend_access();
+        }
+        result
     }
 }
 
