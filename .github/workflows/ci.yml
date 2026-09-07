@@ -341,6 +341,9 @@ jobs:
           - name: Windows store evidence
             suite: store-lib
             shard: 4
+          - name: Windows store publication
+            suite: store-lib
+            shard: 5
     runs-on: windows-2022
     steps:
       - name: Initialize isolated Cargo paths
@@ -392,7 +395,7 @@ jobs:
       - name: Test Windows store unit shard
         if: ${{ matrix.suite == 'store-lib' }}
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --suite store-lib --index ${{ matrix.shard }} --count 5'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --suite store-lib --index ${{ matrix.shard }} --count 6'
 
   windows-integration:
     name: Windows integration ${{ matrix.shard }}/6

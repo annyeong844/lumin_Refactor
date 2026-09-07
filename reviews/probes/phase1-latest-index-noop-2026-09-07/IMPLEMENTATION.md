@@ -131,5 +131,25 @@ Existing staged packages and raw measurement packets are unchanged. Removal of
 rebuildable caches is not a new performance measurement or a CI verdict.
 
 P1-60 and P1-70 remain open. The local comparison does not establish a meaningful
-cold-audit speedup or hosted Windows budget success. No new commit, push, hosted verdict,
-ready/merge action, allocator approval or Phase 1 exit is implied.
+cold-audit speedup or hosted budget success. The [initial hosted packet](CI-EVIDENCE.md)
+records the published product revision, both scaling misses, and an independent
+Windows test-routing omission. Its correction only adds the publication module
+as the sixth store-unit partition, updates the exact workflow admission, and
+tests removal of that required partition. No product code, benchmark harness,
+budget, schema, dependency, ready/merge action, allocator approval or Phase 1
+exit is implied by this routing correction.
+
+The external Rust advisory for the two changed xtask files is
+`2026-09-07T13-23-55-985Z-c5a7b8`, closed by matching post-write
+`2026-09-07T13-26-51-411Z-2f30ae`. Both planned Rust files were observed with no
+unexpected files or parse errors; non-applicable TS lanes and the unrefreshed
+base audit are not quality/absence proof. Artifacts remain at
+`D:\lumin-w5-shard-gate-20260907`. The focused shard/admission tests pass (4 and
+20 tests), followed by all 188 Windows xtask tests. The actual six-shard command
+passes all 283 store tests in its six distinct partitions: cache 10, gate 45,
+namespace 193, retention 27, evidence 3, and publication 5. Build/test execution
+is serial to respect available memory. Scoped xtask Clippy passes with warnings
+denied; fmt, whitespace, and all 75 live/new Markdown checks pass. An actual
+obsolete five-shard invocation is refused before listing or execution. These
+checks verify routing without rerunning or weakening the failed numeric matrix;
+the correction still requires its own public CI result.

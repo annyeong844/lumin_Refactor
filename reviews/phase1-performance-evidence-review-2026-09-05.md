@@ -25,15 +25,19 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
-on head `d63281bb613a907219f3e78348f29f7c777f102a` / merge checkout
-`c38c5e07bc17a974678e6a130eee3aff26be2ea8` passes both builds and staged
+The [latest completed public CI packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
+on head `4ec0af7d3923f93cb23cd8c8f3121121b3bad039` / merge checkout
+`12bc25042407e34a9a1aa766c81930f13514ecc8` passes both builds and staged
 binary/adapter behavior probes. Both platforms complete all 34 benchmark cells
-with valid semantic truth and process observations. Native Linux passes its
-numeric matrix; Windows misses scaling at `0.842191828905966` against `0.75`,
-so its package job and Required remain failed. The separate diagnostic is not
-budget authority. The [earlier invalid/missed W3 packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
-remains retained and is not reclassified by this new measurement.
+with valid semantic truth and process observations, but both miss scaling:
+Windows `0.8761661662571489` and native Linux `1.666355334361666`, against `0.75`.
+Five Windows store-unit jobs also refuse the newly introduced `publication`
+module missing from their closed shard inventory. The routing correction does
+not change product code or the independent numeric verdict. Both package jobs
+and Required remain failed. The separate diagnostic is not budget authority.
+The [earlier W4 packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
+and [invalid/missed W3 packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
+remain retained and are not reclassified by this measurement.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It
@@ -107,8 +111,10 @@ Its [local implementation checks](probes/phase1-latest-index-noop-2026-09-07/IMP
 and [four fresh control/candidate packets](probes/phase1-latest-index-noop-2026-09-07/MEASUREMENTS.md)
 are complete. Both controls and candidates pass locally under the eight-worker
 policy, with little cold-audit change and mixed changes in other modes. This is
-not evidence that the hosted four-worker Windows miss is fixed. Fresh blocking
-CI evidence for the candidate remains required before acceptance.
+not evidence that the hosted four-worker misses are fixed. Its
+[initial hosted execution](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
+retains both numeric misses and the separate test-routing failure. Fresh blocking
+CI evidence after the routing correction remains required before acceptance.
 
 ## Proposed WSL `/mnt` disposition
 

@@ -116,7 +116,7 @@ const WINDOWS_INTEGRATION_RUN: &str = concat!(
 const WINDOWS_STORE_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
-    "--suite store-lib --index ${{ matrix.shard }} --count 5"
+    "--suite store-lib --index ${{ matrix.shard }} --count 6"
 );
 const LINUX_MUSL_C_SETUP: &str = concat!(
     "      - name: Install Linux musl C compiler\n",
@@ -794,6 +794,7 @@ fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut V
         ("Windows store namespace", "store-lib", 2),
         ("Windows store retention", "store-lib", 3),
         ("Windows store evidence", "store-lib", 4),
+        ("Windows store publication", "store-lib", 5),
     ] {
         let partition = format!(
             "          - name: {name}\n            suite: {suite}\n            shard: {shard}\n"
@@ -804,7 +805,7 @@ fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut V
             ));
         }
     }
-    for (key, expected_count) in [("suite:", 6), ("shard:", 6)] {
+    for (key, expected_count) in [("suite:", 7), ("shard:", 7)] {
         if block
             .lines()
             .map(str::trim)
@@ -1639,8 +1640,17 @@ mod tests {
                 1,
             ),
             source.replacen(
+                concat!(
+                    "          - name: Windows store publication\n",
+                    "            suite: store-lib\n",
+                    "            shard: 5\n"
+                ),
+                "",
+                1,
+            ),
+            source.replacen(
+                "--suite store-lib --index ${{ matrix.shard }} --count 6",
                 "--suite store-lib --index ${{ matrix.shard }} --count 5",
-                "--suite store-lib --index ${{ matrix.shard }} --count 4",
                 1,
             ),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
