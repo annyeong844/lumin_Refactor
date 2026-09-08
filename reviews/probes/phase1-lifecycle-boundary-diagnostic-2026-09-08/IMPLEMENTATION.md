@@ -1,6 +1,6 @@
 # W7 diagnostic implementation acceptance
 
-Status: **local implementation checks complete; hosted diagnostic packet pending**.
+Status: **local checks and hosted diagnostic observation complete; blocking CI remains red**.
 This is not a performance, full-CI or merge PASS.
 
 Authority is the explicitly frozen [DESIGN.md](DESIGN.md), SHA-256
@@ -62,8 +62,8 @@ Rust lifecycle evidence with opaque macro/configuration surfaces; it is not a
 full absence or quality proof. Matching post-write observed all 26 planned
 files, five planned new files, no unexpected new files and no reported parse
 errors. It completed before broader Cargo regression checks; base audit
-evidence was not refreshed. The prior hosted ordinary benchmark and Required
-remain red. No W7 timing result is claimed.
+evidence was not refreshed. The [hosted W7 evidence](CI-EVIDENCE.md) separately
+records the complete observation, ordinary Windows miss and lint correction.
 
 The structural check exposed a remaining W3-only orchestration constant in
 `tools/xtask/src/cargo_bootstrap.rs`. The follow-up changes only that routing
@@ -86,6 +86,36 @@ exit `2` and the new selector in its output. Source SHA-256 is
 `63fa3999ad822ee09f67233b430090720b6e072a0f00f0664b25713ea537e0c9`;
 the advisory, focused probe and subsequent xtask checks are retained under
 `D:/lumin-w7-help-gate-20260908/`.
+
+## Hosted feature-off lint correction
+
+The first hosted run, [34238854239](https://github.com/annyeong844/lumin_Refactor/actions/runs/34238854239),
+found `clippy::redundant_closure` in the feature-off, test-only
+`publication/latest.rs::sync_index_with_commit` adapter. The prior scoped
+Clippy checks did not cover this ordinary store-test configuration; their
+success was not full-workspace lint evidence. Both hosted lint failures are
+retained, not relabelled passes.
+
+The correction selects the original two-argument closure only when W7 is
+enabled and passes `commit` directly otherwise. Only this `#[cfg(test)]`
+adapter changes. The independent ownership reviewer returned scoped **PASS**
+against published head `945f373a65d6fe79fba98c5dc4e535d3b8c045ee`: no
+production body, callback order, resource lifetime or failure behavior changes.
+The corrected `publication/latest.rs` SHA-256 is
+`b980aa8128571fa82880825607d522bd92167bc2be77619661103272b21d5797`;
+the earlier table records the originally published source comparison.
+
+The new external Rust pair is pre-write
+`2026-09-08T14-35-34-770Z-917b98` and post-write
+`2026-09-08T14-43-46-910Z-6d244e`. It observed the one planned file, no new
+files and no reported parse errors; base audit evidence was not refreshed.
+Before post-write, the exact latest-index tests passed: Windows five ordinary
+and ten W7 tests, Linux five ordinary tests. After post-write, ordinary and W7
+store all-target Clippy passed on both platforms with `-D warnings`, and
+pinned formatting passed. The exact failing hosted command, locked
+`cargo clippy --workspace --all-targets -- -D warnings`, subsequently passed
+on Windows and native Linux as well. Raw advisories and logs are retained outside the
+repository under `D:/lumin-w7-feature-off-lint-20260908/`.
 
 ## Local execution evidence
 
@@ -113,7 +143,7 @@ aggregate corpus-completeness or clean-CI claim.
 | W5/W6 and namespace replacement | Both platforms pass all seven `state_namespace_replacement` tests, including the unchanged-index abort and four generation-bound session-read cases. Logs: `windows-namespace-regressions.txt`, `linux-namespace-regressions.txt`. Linux executes the compiled test target as root only for its required mount fixtures; Windows exercises the separate C:/D: volume control. |
 | Staged ordinary distribution | Windows and Linux stage the normal release package and pass the platform probe plus both packaged skill adapters. Logs: `windows-package-stage.txt`, `windows-package-platform.txt`, `windows-package-skills.txt`, `linux-package-adapters.txt`. Neither staged binary enables diagnostics. |
 | Incompatible feature union | Windows reaches Cargo and gets the expected owner compile rejection, exit 101, for W7 plus `lifecycle-test-fault`. Log: `windows-incompatible-feature-check.txt`; this is a negative proof, not a successful binary build. |
-| Hosted routing and policy | Source-provenance tests pass 40/40 on each platform; CI-policy tests pass 12/12. Logs: `windows-source-provenance-tests-final.txt`, `linux-source-provenance-tests-final.txt`, `windows-ci-policy-tests-final.txt`. The actual hosted job has not run. |
+| Hosted routing and policy | Source-provenance tests pass 40/40 on each platform; CI-policy tests pass 12/12. Logs: `windows-source-provenance-tests-final.txt`, `linux-source-provenance-tests-final.txt`, `windows-ci-policy-tests-final.txt`. The actual hosted execution is recorded separately in [CI-EVIDENCE.md](CI-EVIDENCE.md). |
 | Windows lint and runner | W7 model/protocol/store library and test Clippy, ordinary diagnostic-probe Clippy and final xtask all-target Clippy pass with `-D warnings`. Logs: `windows-diagnostic-owner-clippy-final-verified.txt`, `windows-public-probe-clippy-r2.txt`, and the final xtask logs in the help evidence root. All 192 Windows xtask tests pass there. |
 | Linux lint and runner | W7 model/protocol/store library and test Clippy passes with the exact `-D warnings` argument. Log: `linux-w7-owner-clippy-final-verified.txt`. All 191 Linux xtask tests and all-target Clippy pass in `linux-final-freshness-xtask-architecture.txt` in the help evidence root. |
 | Structural and document checks | Final Linux architecture check is STRUCTURAL PASS, explicitly not dependency admission. Log: `linux-architecture-final.txt` in the help evidence root. Pinned `cargo fmt --all -- --check`, `git diff --check`, and the owner document checker over all 88 tracked/new live Markdown files pass; document log: `documentation-final.txt`. |
@@ -140,7 +170,10 @@ public-child fixtures do not substitute for the runner's full 256-tuple oracle,
 fixed two-conditioning/twelve-measured schedule, process-lifetime receipts or
 archived hosted observations.
 
-Publication and the clean-checkout CI measurement are authorized and pending.
+The authorized publication and clean-checkout fourteen-cell measurement are
+complete; the exact packet is retained in [CI-EVIDENCE.md](CI-EVIDENCE.md).
+The feature-off test adapter correction has passed local ordinary/W7 and exact
+workspace Clippy checks, but still requires its clean hosted verification.
 Numeric-budget relaxation and product optimization are not authorized.
 P1-60 and P1-70 remain open; no
 four-worker performance conclusion, permanent-metric completion or merge

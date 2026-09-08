@@ -751,10 +751,12 @@ fn sync_index_with_commit(
     sync_index_with_commit_profiled(
         guard,
         latest,
-        |write,
-         #[cfg(feature = "audit-lifecycle-test-profile")] _profile: Option<
-            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
-        >| commit(write),
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        |write, _profile: Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>| {
+            commit(write)
+        },
+        #[cfg(not(feature = "audit-lifecycle-test-profile"))]
+        commit,
         #[cfg(feature = "audit-lifecycle-test-profile")]
         None,
     )

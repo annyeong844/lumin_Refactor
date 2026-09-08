@@ -170,17 +170,17 @@ checkout.
 Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
-The latest completed CI matrices have valid process/semantic observations and
-passing package/adapter behavior on both platforms. Windows scaling still misses
-at `0.8858605752999565` against `0.75`; native Linux passes at
-`0.3445646113969991`. The current hosted run passes 56 of 58 jobs, including
-all Windows store and integration partitions; only the Windows benchmark and
-dependent Required fail. W6's exact hosted verification and the bounded
-store-cost investigation are routed through REVIEW-005. The narrower W7
-diagnostic design has author and independent scoped PASS and explicit owner
-freeze. Its diagnostic implementation passes the scoped local Windows/Linux
-checks; publication and the clean-checkout fourteen-cell hosted packet are
-authorized and pending. No optimization is approved. Different hosted
+The latest [W7 hosted packet](reviews/probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md)
+has verified process/semantic observations and passing actual package/adapter
+behavior on both platforms. Windows scaling still misses at
+`0.8112449801169962` against `0.75`; native Linux passes at
+`0.675313176573408`. Its first hosted run passes 54 of 58 jobs: both ordinary
+lint jobs fail on the same test-only callback, and Windows benchmark plus
+dependent Required fail. The callback correction passes focused tests and
+ordinary/W7 plus exact workspace Clippy locally on both platforms; its clean
+hosted verification remains required. The authorized fourteen-cell diagnostic
+is complete and narrows selected backend construction/release costs without
+changing resource lifetimes. No optimization is approved. Different hosted
 machines, local eight-worker passes, and the rejected affinity comparison do
 not establish a controlled speedup or resolve the four-worker Windows miss.
 Passing blocking CI evidence, permanent runtime worker/stage observations,

@@ -169,8 +169,13 @@ routes to the prepared
 Its [exact author and independent scoped design reviews](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/REVIEW.md)
 pass, and the owner explicitly froze that exact candidate for diagnostic
 implementation. Its [implementation acceptance](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/IMPLEMENTATION.md)
-records completed scoped local Windows/Linux checks; the clean-checkout
-fourteen-cell hosted packet is now authorized and remains unexecuted. W7 distinguishes eight selected
+records completed scoped local Windows/Linux checks. The authorized
+[fourteen-cell hosted packet](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md)
+is complete: its captures and frozen counts verify, Windows ordinary scaling
+still misses at `0.8112449801169962`, and both actual packages/adapters pass.
+Two ordinary lint jobs additionally found one test-only feature-off callback;
+its correction passes local tests and exact Windows/Linux workspace Clippy,
+but requires clean hosted verification. W7 distinguishes eight selected
 call contexts and thirteen disjoint API costs without changing existing resource
 lifetimes or claiming raw flush/lock-wait attribution. It establishes no hosted
 performance PASS or optimization authority. W6 grants no broader optimization, worker-policy
