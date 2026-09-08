@@ -287,14 +287,38 @@ fn validate_current_database(
 ))]
 impl CurrentStore {
     pub(super) fn complete_logical_observation(&self) -> Result<Vec<u8>, StoreError> {
+        self.observation_metadata.encode(&self.snapshot)
+    }
+}
+
+#[cfg(any(
+    test,
+    feature = "logical-store-snapshot-test",
+    feature = "namespace-test-crash",
+    feature = "retention-test-crash"
+))]
+impl CurrentStoreObservationMetadata {
+    fn encode(&self, snapshot: &LogicalStoreSnapshot) -> Result<Vec<u8>, StoreError> {
         serde_json::to_vec(&CompleteLogicalStoreObservation {
-            store_header: &self.observation_metadata.store_header,
-            table_names: &self.observation_metadata.table_names,
-            multimap_table_names: &self.observation_metadata.multimap_table_names,
-            records: &self.snapshot,
+            store_header: &self.store_header,
+            table_names: &self.table_names,
+            multimap_table_names: &self.multimap_table_names,
+            records: snapshot,
         })
         .map_err(crate::serialization_error)
     }
+}
+
+#[cfg(feature = "namespace-test-crash")]
+pub(in crate::namespace) fn complete_logical_observation_from_database_for_test(
+    guard: &NamespaceGuard,
+    database: &Database,
+    generation: StoreGeneration,
+) -> Result<Vec<u8>, StoreError> {
+    let (_, anchor) = verify_store_header_anchor(database, &guard.state.binding)?;
+    let validated = validate_current_database(guard, database, generation, anchor.as_ref(), None)?;
+    // The observation transaction has ended; no second backend or guard is opened.
+    validated.observation_metadata.encode(&validated.snapshot)
 }
 
 impl LogicalStoreSnapshot {

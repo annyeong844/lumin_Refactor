@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::StoreError;
@@ -14,6 +14,9 @@ const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
 const BEFORE_LATEST_INDEX_ABORT: &str = "before-latest-index-abort";
+const AFTER_ATTEMPT_SESSION_OPEN: &str = "after-attempt-session-open";
+const AFTER_ATTEMPT_SESSION_OPEN_READ_ERROR: &str = "after-attempt-session-open-read-error";
+const BEFORE_ATTEMPT_SESSION_RETURN: &str = "before-attempt-session-return";
 const BEFORE_MIGRATION_STORE_COMMIT: &str = "before-migration-store-commit";
 const BEFORE_LATEST_REPLACE: &str = "before-latest-replace";
 const BEFORE_RETENTION_COMMIT: &str = "before-retention-commit";
@@ -21,6 +24,7 @@ const BEFORE_RUN_RENAME: &str = "before-run-rename";
 const BEFORE_RETENTION_MOVE: &str = "before-retention-move";
 const BEFORE_CACHE_MOVE: &str = "before-cache-move";
 static REACHED: AtomicBool = AtomicBool::new(false);
+static SESSION_READ: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn wait_after_pre_acquire_validation() -> Result<(), StoreError> {
     wait(AFTER_PRE_ACQUIRE_VALIDATION)
@@ -36,6 +40,46 @@ pub(crate) fn wait_before_store_commit() -> Result<(), StoreError> {
 
 pub(crate) fn wait_before_latest_index_abort() -> Result<(), StoreError> {
     wait(BEFORE_LATEST_INDEX_ABORT)
+}
+
+pub(crate) fn wait_after_attempt_session_open(
+    database: &super::StoreDatabase<'_>,
+) -> Result<(), StoreError> {
+    let ordinal = SESSION_READ.fetch_add(1, Ordering::SeqCst) + 1;
+    wait_for_session(AFTER_ATTEMPT_SESSION_OPEN, ordinal, database)?;
+    if wait_for_session(AFTER_ATTEMPT_SESSION_OPEN_READ_ERROR, ordinal, database)? {
+        return Err(StoreError::Integrity(
+            "injected attempt-session lease read failure".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn wait_before_attempt_session_return(
+    database: &super::StoreDatabase<'_>,
+) -> Result<(), StoreError> {
+    wait_for_session(
+        BEFORE_ATTEMPT_SESSION_RETURN,
+        SESSION_READ.load(Ordering::SeqCst),
+        database,
+    )
+    .map(|_| ())
+}
+
+fn wait_for_session(
+    stage: &str,
+    ordinal: usize,
+    database: &super::StoreDatabase<'_>,
+) -> Result<bool, StoreError> {
+    let stage = match ordinal {
+        1 => stage.to_owned(),
+        2 => format!("{stage}:finalize"),
+        3 => format!("{stage}:release"),
+        _ => return Ok(false),
+    };
+    wait_with_observation(&stage, || {
+        database.complete_logical_observation_for_test().map(Some)
+    })
 }
 
 pub(crate) fn wait_before_migration_store_commit() -> Result<(), StoreError> {
@@ -63,8 +107,15 @@ pub(crate) fn wait_before_cache_move() -> Result<(), StoreError> {
 }
 
 fn wait(stage: &str) -> Result<(), StoreError> {
+    wait_with_observation(stage, || Ok(None)).map(|_| ())
+}
+
+fn wait_with_observation(
+    stage: &str,
+    observation: impl FnOnce() -> Result<Option<Vec<u8>>, StoreError>,
+) -> Result<bool, StoreError> {
     let (address, selected) = match (std::env::var_os(ADDRESS_ENV), std::env::var_os(STAGE_ENV)) {
-        (None, None) => return Ok(()),
+        (None, None) => return Ok(false),
         (Some(address), Some(selected)) => (address, selected),
         _ => {
             return Err(StoreError::Integrity(format!(
@@ -81,7 +132,7 @@ fn wait(stage: &str) -> Result<(), StoreError> {
         )));
     }
     if selected != stage || REACHED.swap(true, Ordering::SeqCst) {
-        return Ok(());
+        return Ok(false);
     }
 
     let address = address.into_string().map_err(|_| {
@@ -98,6 +149,7 @@ fn wait(stage: &str) -> Result<(), StoreError> {
         ));
     }
 
+    let observation = observation()?;
     let mut stream = TcpStream::connect(address).map_err(io_error)?;
     stream
         .set_read_timeout(Some(BARRIER_TIMEOUT))
@@ -107,6 +159,13 @@ fn wait(stage: &str) -> Result<(), StoreError> {
         .map_err(io_error)?;
     stream.write_all(stage.as_bytes()).map_err(io_error)?;
     stream.write_all(b"\n").map_err(io_error)?;
+    if let Some(bytes) = observation {
+        let length = u64::try_from(bytes.len()).map_err(|_| {
+            StoreError::Integrity("namespace observation length overflow".to_owned())
+        })?;
+        stream.write_all(&length.to_be_bytes()).map_err(io_error)?;
+        stream.write_all(&bytes).map_err(io_error)?;
+    }
     stream.flush().map_err(io_error)?;
 
     let mut release = [0_u8; RELEASE_FRAME.len()];
@@ -116,16 +175,28 @@ fn wait(stage: &str) -> Result<(), StoreError> {
             "namespace test barrier returned an invalid release frame".to_owned(),
         ));
     }
-    Ok(())
+    Ok(true)
 }
 
 fn is_supported_stage(stage: &str) -> bool {
+    if let Some((base, phase)) = stage.split_once(':') {
+        return matches!(phase, "finalize" | "release")
+            && matches!(
+                base,
+                AFTER_ATTEMPT_SESSION_OPEN
+                    | AFTER_ATTEMPT_SESSION_OPEN_READ_ERROR
+                    | BEFORE_ATTEMPT_SESSION_RETURN
+            );
+    }
     matches!(
         stage,
         AFTER_PRE_ACQUIRE_VALIDATION
             | AFTER_COMPLETE_VALIDATION
             | BEFORE_STORE_COMMIT
             | BEFORE_LATEST_INDEX_ABORT
+            | AFTER_ATTEMPT_SESSION_OPEN
+            | AFTER_ATTEMPT_SESSION_OPEN_READ_ERROR
+            | BEFORE_ATTEMPT_SESSION_RETURN
             | BEFORE_MIGRATION_STORE_COMMIT
             | BEFORE_LATEST_REPLACE
             | BEFORE_RETENTION_COMMIT

@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -51,7 +51,8 @@ impl NamespaceBarrier {
                     stream.set_nonblocking(false)?;
                     stream.set_read_timeout(Some(BARRIER_WAIT_LIMIT))?;
                     let mut frame = String::new();
-                    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+                    let mut stream = BufReader::new(stream);
+                    stream.read_line(&mut frame)?;
                     assert_eq!(frame.trim_end(), self.stage);
                     return Ok(Permit { stream });
                 }
@@ -88,12 +89,25 @@ impl NamespaceBarrier {
 }
 
 pub struct Permit {
-    stream: TcpStream,
+    stream: BufReader<TcpStream>,
 }
 
 impl Permit {
+    pub fn read_observation(&mut self) -> TestResult<Vec<u8>> {
+        let mut length = [0_u8; 8];
+        self.stream.read_exact(&mut length)?;
+        let length = usize::try_from(u64::from_be_bytes(length))?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length)?;
+        bytes.resize(length, 0);
+        self.stream.read_exact(&mut bytes)?;
+        // Strict JSON decoding also rejects an empty, partial or trailing frame.
+        let _: serde_json::Value = serde_json::from_slice(&bytes)?;
+        Ok(bytes)
+    }
+
     pub fn release(mut self) -> TestResult {
-        self.stream.write_all(b"release\n")?;
+        self.stream.get_mut().write_all(b"release\n")?;
         Ok(())
     }
 }

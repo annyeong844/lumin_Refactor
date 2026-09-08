@@ -25,16 +25,23 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
-on head `4ec0af7d3923f93cb23cd8c8f3121121b3bad039` / merge checkout
-`12bc25042407e34a9a1aa766c81930f13514ecc8` passes both builds and staged
-binary/adapter behavior probes. Both platforms complete all 34 benchmark cells
-with valid semantic truth and process observations, but both miss scaling:
-Windows `0.8761661662571489` and native Linux `1.666355334361666`, against `0.75`.
-Five Windows store-unit jobs also refuse the newly introduced `publication`
-module missing from their closed shard inventory. The routing correction does
-not change product code or the independent numeric verdict. Both package jobs
-and Required remain failed. The separate diagnostic is not budget authority.
+The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34135740840)
+on head `95163f586f2d9ea9dcae7f356d94e10469ec84e9` / merge checkout
+`aa1288238565d4e318e976a818b503128cfd10bd` passes 56 of 58 jobs, including
+both builds, staged binary/adapter behavior, and every Windows store and
+integration partition. Both platforms complete all 34 benchmark cells with
+valid semantic truth and process observations. Windows scaling alone misses
+at `0.8692717421027233`; native Linux passes at `0.7089608730181117`, against
+`0.75`. The Windows package benchmark and dependent Required remain failed.
+The ordinary Windows report SHA-256 is
+`6102b65c4d4635ca2caa0947c46fc82ecf260d559cd3a851798ba5f47c99e293`;
+native Linux report SHA-256 is
+`29ae4a60429f1b231801f52bdca6564b4c4f16bb5b8bfd9a4c65b1bc16e3aaaf`.
+All 745 Windows and 711 Linux capture files match their manifests; all sample
+medians and the complete semantic-map identity were independently rechecked.
+The separate diagnostic is not budget authority. The
+[initial W5 packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
+retains its independent numeric misses and then-failing test routing.
 The [earlier W4 packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
 and [invalid/missed W3 packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
 remain retained and are not reclassified by this measurement.
@@ -115,10 +122,43 @@ not evidence that the hosted four-worker misses are fixed. Its
 [initial hosted execution](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
 retains both numeric misses and the separate test-routing failure. The
 [routing follow-up and integration diagnosis](probes/phase1-latest-index-noop-2026-09-07/INTEGRATION-DIAGNOSTICS.md)
-records passing store partitions and Linux scaling, the still-failing Windows
-scaling budget, and two unresolved hosted gate-barrier arrivals. The local
-reproduction passes do not establish a cause or invalidate the hosted failures;
-fresh blocking CI evidence remains required before acceptance.
+retains the two earlier hosted gate-barrier failures and the scoped diagnostic
+change. Those tests pass in the current hosted run, without establishing the
+earlier failures' cause or invalidating their evidence. The current Windows
+scaling miss still blocks acceptance.
+
+The current bounded implementation is
+[W6 generation-bound attempt-session read](probes/phase1-attempt-session-read-2026-09-08/DESIGN.md),
+with its [scoped review and frozen W6-03 amendment](probes/phase1-attempt-session-read-2026-09-08/REVIEW.md).
+It proposes replacing two consecutive backend lifetimes inside one session
+validation with one short generation-bound lease read. Original held-object,
+receipt, namespace and liveness validation remain required. It introduces no
+guard-wide backend cache and claims no measured speedup. On 2026-09-08 the
+owner approved freezing the exact reviewed bytes for W6 implementation and
+local Windows/Linux comparisons. Implementation exposed a new-guard failure
+continuation that reopens a substituted store writable despite original-guard
+rejection. Three exact Linux public-child barriers reproduce changed foreign
+bytes, and independent review reopens the candidate. The
+[blocker](probes/phase1-attempt-session-read-2026-09-08/IMPLEMENTATION-BLOCKER.md)
+retains the original negative evidence. Its
+[failure-continuation authority](probes/phase1-attempt-session-read-2026-09-08/FAILURE-CONTINUATION.md)
+is now owner-approved with author and independent scoped PASS. The
+[implementation evidence](probes/phase1-attempt-session-read-2026-09-08/IMPLEMENTATION.md)
+closes the focused counterexample on both platforms and preserves all three
+publication phases, exact durable outcomes and original negative evidence.
+Affected Windows corpus modes and both actual packages/adapters pass. Four fresh
+[local comparison packets](probes/phase1-attempt-session-read-2026-09-08/MEASUREMENTS.md)
+pass local targets, with 2.83%/1.65% lower Windows/Linux cold medians and mixed
+changes elsewhere. They do not establish a material causal speedup or close the
+hosted four-worker gap. A separate
+[four-logical-CPU Windows comparison](probes/phase1-attempt-session-read-2026-09-08/FOUR-WORKER-COMPARISON.md)
+was rejected after its control: Rust 1.96.0 still reports 12 processors/eight
+default workers under the launcher's four-CPU affinity. The complete control
+packet is retained, the candidate was not run, and no four-worker result is
+claimed. Actual four-processor Windows verification remains open. The owner
+subsequently approved committing/pushing the verified W6 change to its existing
+draft PR and inspecting its new hosted CI, as recorded in the scoped review.
+This grants no broader optimization, worker-policy change, or budget amendment.
 
 ## Proposed WSL `/mnt` disposition
 

@@ -159,10 +159,18 @@ static INV_STATE_NAMESPACE_INITIALIZATION_CRASH: &[CorpusInvocation] = &[
 static INV_STATE_LOCK_REPLACEMENT: &[CorpusInvocation] = &[
     inv!("state_namespace", "public_process_rejects_lifecycle_lock_replacement"),
     inv!("state_namespace_replacement", "lock_replacement_never_forms_two_accepted_guard_domains", LifecycleFault),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_open", LifecycleFault),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_final_validation", LifecycleFault),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_with_read_error", LifecycleFault),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_failure_persists_one_failed_attempt", LifecycleFault),
 ];
 #[rustfmt::skip]
 static INV_STATE_LOCK_REPLACEMENT_CRASH: &[CorpusInvocation] = &[
     inv!("state_namespace_replacement", "lock_replacement_never_forms_two_accepted_guard_domains", LifecycleCrash),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_open", LifecycleCrash),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_final_validation", LifecycleCrash),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_with_read_error", LifecycleCrash),
+    inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_failure_persists_one_failed_attempt", LifecycleCrash),
 ];
 #[rustfmt::skip]
 static INV_STATE_MANAGED_PARENT_REPLACEMENT: &[CorpusInvocation] = &[

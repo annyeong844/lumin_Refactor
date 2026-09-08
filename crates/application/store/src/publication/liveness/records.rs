@@ -3,7 +3,7 @@ use lumin_model::{AttemptId, AttemptStatus, PhysicalFileIdentity};
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
-use crate::namespace::{HeldEntry, NamespaceGuard, entry_exists, lock_contended};
+use crate::namespace::{HeldEntry, NamespaceGuard, StoreDatabase, entry_exists, lock_contended};
 use crate::{
     ATTEMPT_LEASES, SEQUENCES, StoreError, StoreGeneration, backend_error, io_error,
     serialization_error,
@@ -198,6 +198,66 @@ pub(super) fn read(
     attempt_id: &AttemptId,
 ) -> Result<Option<AttemptLeaseRecord>, StoreError> {
     let database = guard.open_database()?;
+    read_lease(&database, attempt_id)
+}
+
+pub(super) fn read_session(
+    guard: &NamespaceGuard,
+    generation: StoreGeneration,
+    attempt_id: &AttemptId,
+) -> Result<AttemptLeaseRecord, StoreError> {
+    read_session_with_hooks(
+        guard,
+        generation,
+        attempt_id,
+        |_database| {
+            #[cfg(feature = "namespace-test-crash")]
+            crate::namespace::barrier::wait_after_attempt_session_open(_database)?;
+            Ok(())
+        },
+        |_database| {
+            #[cfg(feature = "namespace-test-crash")]
+            crate::namespace::barrier::wait_before_attempt_session_return(_database)?;
+            Ok(())
+        },
+    )
+}
+
+pub(super) fn read_session_with_hooks(
+    guard: &NamespaceGuard,
+    generation: StoreGeneration,
+    attempt_id: &AttemptId,
+    after_open: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
+    before_return: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
+) -> Result<AttemptLeaseRecord, StoreError> {
+    let database = match guard.open_database_for_generation(generation) {
+        Ok(database) => database,
+        Err(error) => {
+            guard.reject_backend_access();
+            return Err(error);
+        }
+    };
+    // Even a read/decoder failure must finish against this original held object.
+    // No row transaction or borrowed backend value escapes the retained result.
+    let result = (|| {
+        after_open(&database)?;
+        read_lease(&database, attempt_id)?.ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "attempt process-liveness lease is missing: {}",
+                attempt_id.as_str()
+            ))
+        })
+    })();
+    let validation = database.finish_attempt_session_read(|| before_return(&database));
+    drop(database);
+    validation?;
+    result
+}
+
+fn read_lease(
+    database: &StoreDatabase<'_>,
+    attempt_id: &AttemptId,
+) -> Result<Option<AttemptLeaseRecord>, StoreError> {
     let read = database.begin_read()?;
     let table = match read.open_table(ATTEMPT_LEASES) {
         Ok(table) => table,

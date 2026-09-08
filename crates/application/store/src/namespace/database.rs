@@ -11,6 +11,9 @@ use super::store_header::{
 };
 use super::{NamespaceGuard, require_state_volume};
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub(crate) struct StoreDatabase<'guard> {
     guard: &'guard NamespaceGuard,
     entry: HeldEntry,
@@ -50,6 +53,8 @@ impl NamespaceGuard {
         let database = Database::builder()
             .create_file(entry.file().try_clone().map_err(io_error)?)
             .map_err(backend_error)?;
+        #[cfg(test)]
+        tests::observe(|counts| counts.opens += 1);
         let generation = verify_store_header(&database, &self.state.binding)?;
         let database = StoreDatabase {
             guard: self,
@@ -118,6 +123,8 @@ impl NamespaceGuard {
         #[cfg(not(feature = "namespace-test-crash"))]
         let _ = test_boundary;
         write.commit().map_err(backend_error)?;
+        #[cfg(test)]
+        tests::observe(|counts| counts.commits += 1);
         self.validate_bound_entries()?;
         database.validate_current()?;
         database.validate_receipt_set_current()?;
@@ -147,6 +154,15 @@ impl NamespaceGuard {
 }
 
 impl<'guard> StoreDatabase<'guard> {
+    #[cfg(feature = "namespace-test-crash")]
+    pub(crate) fn complete_logical_observation_for_test(&self) -> Result<Vec<u8>, StoreError> {
+        super::migration::complete_logical_observation_from_database_for_test(
+            self.guard,
+            &self.database,
+            self.generation,
+        )
+    }
+
     pub(crate) fn generation(&self) -> StoreGeneration {
         self.generation
     }
@@ -154,6 +170,8 @@ impl<'guard> StoreDatabase<'guard> {
     pub(crate) fn begin_read(&self) -> Result<StoreReadTransaction<'_, 'guard>, StoreError> {
         self.guard.require_backend_access()?;
         let read = self.database.begin_read().map_err(backend_error)?;
+        #[cfg(test)]
+        tests::observe(|counts| counts.reads += 1);
         verify_validation_receipt_set_read(&read, &self.guard.state.binding, self.generation)?;
         Ok(StoreReadTransaction {
             read,
@@ -164,11 +182,36 @@ impl<'guard> StoreDatabase<'guard> {
     pub(crate) fn begin_write(&self) -> Result<StoreWriteTransaction<'_, 'guard>, StoreError> {
         self.guard.require_backend_access()?;
         let write = self.database.begin_write().map_err(backend_error)?;
+        #[cfg(test)]
+        tests::observe(|counts| counts.writes += 1);
         verify_store_header_write(&write, &self.guard.state.binding, self.generation)?;
         Ok(StoreWriteTransaction {
             write,
             database: self,
         })
+    }
+
+    pub(crate) fn finish_attempt_session_read(
+        &self,
+        before_return: impl FnOnce() -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let result = (|| {
+            self.validate_attempt_session_read()?;
+            before_return()?;
+            self.validate_attempt_session_read()
+        })();
+        if result.is_err() {
+            self.guard.reject_backend_access();
+        }
+        result
+    }
+
+    fn validate_attempt_session_read(&self) -> Result<(), StoreError> {
+        self.guard.require_backend_access()?;
+        self.guard.validate_bound_entries()?;
+        self.validate_current()?;
+        self.validate_receipt_set_current()?;
+        self.guard.validate_bound_entries()
     }
 
     fn require_generation(&self, expected: StoreGeneration) -> Result<(), StoreError> {

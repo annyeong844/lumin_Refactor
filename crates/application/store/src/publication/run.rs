@@ -30,6 +30,7 @@ pub(super) fn publish(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
+    session.require_backend_access()?;
     store_phase_begin!(profile, PublishPrepare);
     let (envelope, record) = prepare_publication(
         store,

@@ -172,12 +172,21 @@ Owner route: SLICE-001 Sections 12 and 14, AC 16.
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
 The latest completed CI matrices have valid process/semantic observations and
 passing package/adapter behavior on both platforms. Windows scaling still misses
-at `0.8827104102678495` against `0.75`; native Linux passes at
-`0.7025425044896499`. All six Windows store-test partitions pass after the routing
-correction, but two Windows integration gate-barrier arrivals remain unresolved.
-The complete measurement evidence and scoped integration diagnosis are routed
-through REVIEW-005. Eight-worker local passes do not resolve the four-worker
-hosted Windows miss. New blocking CI evidence, permanent runtime worker/stage
+at `0.8692717421027233` against `0.75`; native Linux passes at
+`0.7089608730181117`. The current hosted run passes 56 of 58 jobs, including
+all Windows store and integration partitions; only the Windows benchmark and
+dependent Required fail. Passing gate-barrier tests do not establish the cause
+of their earlier hosted failures. The complete measurement evidence and next
+bounded session-read candidate are routed through REVIEW-005. Its scoped
+failure-continuation amendment and public counterexample now pass focused
+Windows/Linux verification, with the affected Windows corpus and both staged
+packages passing. Four fresh local comparison packets pass their numeric targets;
+small cold-median reductions and mixed changes elsewhere do not establish a
+material causal speedup. Exact checks and measurements remain in the W6 owner.
+Eight-worker local passes do not resolve the four-worker hosted Windows miss.
+The separate local affinity comparison was rejected for a worker-topology
+mismatch; its candidate remains unrun and provides no four-worker exit proof.
+New blocking CI evidence, permanent runtime worker/stage
 observations, allocator cost approval, and the WSL `/mnt` diagnostic disposition
 remain open.
 

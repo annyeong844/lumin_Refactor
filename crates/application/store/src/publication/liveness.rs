@@ -1,7 +1,10 @@
 mod records;
 mod recovery;
+#[cfg(test)]
+mod tests;
 
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fs2::FileExt;
 use lumin_model::{AttemptId, AttemptStatus};
@@ -17,6 +20,7 @@ pub struct AttemptSession<'store> {
     lease: AttemptLeaseRecord,
     generation: StoreGeneration,
     lock_file: Option<namespace::HeldEntry>,
+    rejected_backend_access: AtomicBool,
 }
 
 pub(super) fn begin<'store>(
@@ -95,6 +99,7 @@ pub(super) fn begin<'store>(
                 generation: lease.generation,
                 lease,
                 lock_file: Some(lock_file),
+                rejected_backend_access: AtomicBool::new(false),
             })
         }
     )
@@ -115,6 +120,7 @@ pub(super) fn finish_failed(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
+    session.require_backend_access()?;
     store.with_exclusive_lock(|guard| {
         session.validate(guard)?;
         let mut envelope = latest::read_attempt(store, guard, &session.lease.attempt_id)?;
@@ -277,20 +283,18 @@ impl AttemptSession<'_> {
     }
 
     pub(super) fn validate(&self, guard: &NamespaceGuard) -> Result<(), StoreError> {
+        self.require_backend_access()?;
         if self.lease.state != AttemptLeaseState::Active {
             return Err(StoreError::Integrity(format!(
                 "attempt session is no longer active: {}",
                 self.lease.attempt_id.as_str()
             )));
         }
-        let database = guard.open_database_for_generation(self.generation)?;
-        drop(database);
-        let persisted = records::read(guard, &self.lease.attempt_id)?.ok_or_else(|| {
-            StoreError::Integrity(format!(
-                "attempt process-liveness lease is missing: {}",
-                self.lease.attempt_id.as_str()
-            ))
-        })?;
+        let persisted = records::read_session(guard, self.generation, &self.lease.attempt_id);
+        if guard.require_backend_access().is_err() {
+            self.rejected_backend_access.store(true, Ordering::Release);
+        }
+        let persisted = persisted?;
         if persisted != self.lease {
             return Err(StoreError::Integrity(format!(
                 "attempt process-liveness lease changed: {}",
@@ -304,6 +308,16 @@ impl AttemptSession<'_> {
             ))
         })?;
         records::validate_lock(guard, lock_file, &self.lease)
+    }
+
+    pub(super) fn require_backend_access(&self) -> Result<(), StoreError> {
+        if self.rejected_backend_access.load(Ordering::Acquire) {
+            return Err(StoreError::Integrity(format!(
+                "attempt session rejected lifecycle backend access: {}",
+                self.lease.attempt_id.as_str()
+            )));
+        }
+        Ok(())
     }
 }
 

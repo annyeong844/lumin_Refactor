@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+#[path = "state_namespace_replacement/attempt_session.rs"]
+mod attempt_session;
 #[path = "support/namespace_barrier.rs"]
 mod namespace_barrier;
 mod support;

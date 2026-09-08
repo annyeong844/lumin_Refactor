@@ -3,6 +3,9 @@ mod artifacts;
 mod barrier;
 mod snapshot;
 
+#[cfg(feature = "namespace-test-crash")]
+pub(super) use snapshot::complete_logical_observation_from_database_for_test;
+
 #[cfg(all(feature = "lifecycle-migration-test-fault", not(debug_assertions)))]
 compile_error!("lifecycle-migration-test-fault is restricted to debug test builds");
 

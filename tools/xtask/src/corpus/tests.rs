@@ -220,8 +220,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![51, 51, 50, 50],
-            CorpusMode::Determinism => vec![64, 35, 35, 34, 34, 34, 34, 34],
+            CorpusMode::Standard => vec![52, 52, 51, 51],
+            CorpusMode::Determinism => vec![64, 35, 35, 35, 35, 35, 35, 34],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -637,6 +637,26 @@ fn state_replacement_rows_use_the_reviewed_public_invocations() -> Result<(), St
                 "lock_replacement_never_forms_two_accepted_guard_domains",
                 FeatureSet::LifecycleFault,
             ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_open",
+                FeatureSet::LifecycleFault
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_final_validation",
+                FeatureSet::LifecycleFault
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_with_read_error",
+                FeatureSet::LifecycleFault
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_failure_persists_one_failed_attempt",
+                FeatureSet::LifecycleFault
+            ),
         ]
     );
     assert_eq!(
@@ -649,11 +669,33 @@ fn state_replacement_rows_use_the_reviewed_public_invocations() -> Result<(), St
             .iter()
             .map(|invocation| (invocation.target, invocation.filter, invocation.features))
             .collect::<Vec<_>>(),
-        vec![(
-            "state_namespace_replacement",
-            "lock_replacement_never_forms_two_accepted_guard_domains",
-            FeatureSet::LifecycleCrash,
-        )]
+        vec![
+            (
+                "state_namespace_replacement",
+                "lock_replacement_never_forms_two_accepted_guard_domains",
+                FeatureSet::LifecycleCrash,
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_open",
+                FeatureSet::LifecycleCrash
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_final_validation",
+                FeatureSet::LifecycleCrash
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_with_read_error",
+                FeatureSet::LifecycleCrash
+            ),
+            (
+                "state_namespace_replacement",
+                "attempt_session::generation_bound_attempt_session_read_failure_persists_one_failed_attempt",
+                FeatureSet::LifecycleCrash
+            ),
+        ]
     );
 
     let parents = REGISTRY
