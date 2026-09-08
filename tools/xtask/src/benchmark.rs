@@ -27,6 +27,9 @@ pub(crate) fn run(arguments: &[String]) -> ExitCode {
     if arguments == ["foundation", "--diagnose-cold-audit-store"] {
         return diagnostic::run(diagnostic::Version::Store);
     }
+    if arguments == ["foundation", "--diagnose-cold-audit-lifecycle"] {
+        return diagnostic::run(diagnostic::Version::Lifecycle);
+    }
     if arguments != ["foundation"] {
         eprintln!("[TOOL ERROR] usage: lumin-xtask benchmark foundation");
         return ExitCode::from(2);

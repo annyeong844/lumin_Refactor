@@ -118,7 +118,7 @@ impl AuditStoreDiagnosticDto {
     }
 }
 
-pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
+pub(super) fn project(value: &AuditExecutionDiagnostic) -> Result<AuditStoreDiagnosticDto, String> {
     let base = audit_diagnostic::project(value)?;
     let store_phases = value
         .pool
@@ -150,6 +150,11 @@ pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
     // W2 projection retains a failed host parallelism observation as null/error.
     // Keep that raw evidence in v2 too; the runner's strict decoder rejects it.
     dto.validate_store_phases()?;
+    Ok(dto)
+}
+
+pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
+    let dto = project(value)?;
     let mut bytes = serde_json::to_string(&dto).map_err(|error| error.to_string())?;
     bytes.push('\n');
     Ok(bytes)

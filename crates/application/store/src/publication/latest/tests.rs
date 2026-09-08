@@ -256,3 +256,204 @@ fn populated_store(root: &Path) -> Result<RepositoryStore, StoreError> {
     drop(attempt);
     Ok(store)
 }
+
+#[cfg(feature = "audit-lifecycle-test-profile")]
+#[test]
+fn audit_lifecycle_actual_missing_and_empty_pointer_reads_and_aborts_preserve_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::audit_lifecycle_profile::LifecycleProfiler;
+    use lumin_model::audit_lifecycle_diagnostic::{AuditLifecycleContext, AuditLifecycleCost};
+    for existing_table in [false, true] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        store.with_exclusive_lock(|guard| {
+            if existing_table {
+                seed_index(guard, &LatestPointer::default())?;
+            }
+            let before = observation(guard)?;
+            let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::OpenRecoveryLatest);
+            let result = derive_legacy_document(&store, guard, Some(&mut recorder));
+            recorder.end(AuditLifecycleCost::DatabaseReturnTail);
+            let latest = result?;
+            assert!(latest.latest_attempt.is_none() && latest.latest_completed.is_none());
+            let row = recorder.finish().map_err(StoreError::Integrity)?;
+            for (cost, count) in [
+                (AuditLifecycleCost::BackendOpen, 1),
+                (AuditLifecycleCost::ReadAdmission, 1),
+                (AuditLifecycleCost::DatabaseReturnTail, 1),
+                (AuditLifecycleCost::BackendAbort, 0),
+            ] {
+                assert_eq!(row.costs[cost as usize].calls, count);
+            }
+            let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::OpenRecoveryLatest);
+            sync_index_profiled(guard, &latest, Some(&mut recorder))?;
+            let row = recorder.finish().map_err(StoreError::Integrity)?;
+            for (cost, count) in [
+                (AuditLifecycleCost::BackendOpen, 1),
+                (AuditLifecycleCost::WriteAdmission, 1),
+                (AuditLifecycleCost::DatabaseReturnTail, 1),
+                (AuditLifecycleCost::BackendAbort, 1),
+                (AuditLifecycleCost::BackendCommit, 0),
+            ] {
+                assert_eq!(row.costs[cost as usize].calls, count);
+            }
+            assert_eq!(observation(guard)?, before);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "audit-lifecycle-test-profile")]
+#[test]
+fn audit_lifecycle_actual_empty_nonempty_lease_and_catalog_return_tails()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::audit_lifecycle_profile::LifecycleProfiler;
+    use lumin_model::audit_lifecycle_diagnostic::{AuditLifecycleContext, AuditLifecycleCost};
+    let root = tempfile::tempdir()?;
+    let store = populated_store(root.path())?;
+    store.with_exclusive_lock(|guard| {
+        let before = observation(guard)?;
+        let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::FinalizeLatest);
+        validate_document_profiled(
+            &store,
+            guard,
+            &read_document(&store, guard)?,
+            Some(&mut recorder),
+        )?;
+        let row = recorder.finish().map_err(StoreError::Integrity)?;
+        for cost in [
+            AuditLifecycleCost::BackendOpen,
+            AuditLifecycleCost::ReadAdmission,
+            AuditLifecycleCost::DatabaseReturnTail,
+        ] {
+            assert_eq!(row.costs[cost as usize].calls, 1);
+        }
+        assert_eq!(observation(guard)?, before);
+        Ok(())
+    })?;
+    let mut attempt = store.begin_attempt()?;
+    store.with_exclusive_lock(|guard| {
+        let before = observation(guard)?;
+        for (id, expected) in [
+            (attempt.attempt_id().clone(), true),
+            (
+                AttemptId::from_string("attempt_000000000000ffff".to_owned()),
+                false,
+            ),
+        ] {
+            let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::AttemptLatest);
+            assert_eq!(
+                super::super::liveness::has_active_lease_profiled(guard, &id, Some(&mut recorder))?,
+                expected
+            );
+            let row = recorder.finish().map_err(StoreError::Integrity)?;
+            for cost in [
+                AuditLifecycleCost::BackendOpen,
+                AuditLifecycleCost::ReadAdmission,
+                AuditLifecycleCost::DatabaseReturnTail,
+            ] {
+                assert_eq!(row.costs[cost as usize].calls, 1);
+            }
+            assert_eq!(observation(guard)?, before);
+        }
+        Ok(())
+    })?;
+    store.fail_attempt(&mut attempt, "finish lease diagnostic fixture")?;
+    drop(attempt);
+    assert!(store.latest_snapshot()?.completed.is_some());
+    Ok(())
+}
+
+#[cfg(feature = "audit-lifecycle-test-profile")]
+#[test]
+fn audit_lifecycle_failed_real_open_cannot_become_a_complete_observation()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::audit_lifecycle_profile::LifecycleProfiler;
+    use lumin_model::audit_lifecycle_diagnostic::{AuditLifecycleContext, AuditLifecycleCost};
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let before = store.with_exclusive_lock(observation)?;
+    let result = store.with_exclusive_lock(|guard| {
+        guard.reject_backend_access();
+        let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::OpenRecoveryLatest);
+        let result = derive_legacy_document(&store, guard, Some(&mut recorder));
+        recorder.end(AuditLifecycleCost::DatabaseReturnTail);
+        assert!(recorder.finish().is_err());
+        result.map(|_| ())
+    });
+    assert!(
+        matches!(result,Err(StoreError::Integrity(message)) if message == "lifecycle backend access was rejected for this namespace guard")
+    );
+    assert_eq!(store.with_exclusive_lock(observation)?, before);
+    Ok(())
+}
+
+#[cfg(feature = "audit-lifecycle-test-profile")]
+#[test]
+fn audit_lifecycle_failed_pointer_decode_keeps_the_owned_error_and_releases_the_database()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::audit_lifecycle_profile::LifecycleProfiler;
+    use lumin_model::audit_lifecycle_diagnostic::{AuditLifecycleContext, AuditLifecycleCost};
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    store.with_exclusive_lock(|guard| {
+        seed_index(guard,&LatestPointer::default())?;
+        let before = observation(guard)?;
+        {
+            let database = guard.open_database()?;
+            let write = database.begin_write()?;
+            {
+                let mut table = write.open_table(POINTERS).map_err(backend_error)?;
+                table.insert("latest-attempt",b"\xff".as_slice()).map_err(backend_error)?;
+            }
+            guard.commit(write)?;
+        }
+        let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::OpenRecoveryLatest);
+        let result = derive_legacy_document(&store,guard,Some(&mut recorder));
+        recorder.end(AuditLifecycleCost::DatabaseReturnTail);
+        assert!(matches!(result,Err(StoreError::Integrity(message)) if message.contains("legacy latest-attempt")));
+        assert!(recorder.finish().is_err());
+        // A second real backend can open and restore the fixture after the
+        // failed owned read; no observer or borrowed value retains its lock.
+        seed_index(guard,&LatestPointer::default())?;
+        assert_eq!(observation(guard)?,before);
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "audit-lifecycle-test-profile")]
+#[test]
+fn audit_lifecycle_actual_index_commit_and_failed_commit_keep_owned_results()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::audit_lifecycle_profile::LifecycleProfiler;
+    use lumin_model::audit_lifecycle_diagnostic::{AuditLifecycleContext, AuditLifecycleCost};
+    let root = tempfile::tempdir()?;
+    let store = populated_store(root.path())?;
+    store.with_exclusive_lock(|guard| {
+        seed_index(guard,&pointer(Some(1),Some(1)))?;
+        let before = observation(guard)?;
+        let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::FinalizeLatest);
+        let result = sync_index_with_commit_profiled(guard,&pointer(Some(3),Some(2)), |_write,_profile| {
+            Err(StoreError::Integrity("owned before-commit failure".to_owned()))
+        },Some(&mut recorder));
+        recorder.end(AuditLifecycleCost::DatabaseReturnTail);
+        assert!(matches!(result,Err(StoreError::Integrity(message)) if message == "owned before-commit failure"));
+        assert!(recorder.finish().is_err());
+        assert_eq!(observation(guard)?,before);
+        let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::FinalizeLatest);
+        let expected = pointer(Some(3),Some(2));
+        sync_index_profiled(guard,&expected,Some(&mut recorder))?;
+        let row = recorder.finish().map_err(StoreError::Integrity)?;
+        for (cost,count) in [(AuditLifecycleCost::BackendOpen,1),(AuditLifecycleCost::WriteAdmission,1),
+            (AuditLifecycleCost::DatabaseReturnTail,1),(AuditLifecycleCost::BackendAbort,0),(AuditLifecycleCost::BackendCommit,1)] {
+            assert_eq!(row.costs[cost as usize].calls,count);
+        }
+        let mut expected_state = before;
+        expected_state["records"]["pointers"] = pointer_rows(&expected);
+        assert_eq!(observation(guard)?,expected_state);
+        Ok(())
+    })?;
+    Ok(())
+}

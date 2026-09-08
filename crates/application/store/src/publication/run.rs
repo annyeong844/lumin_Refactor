@@ -111,8 +111,17 @@ fn prepare_publication(
             envelope.finished_unix_millis = Some(unix_millis()?);
             envelope.run_id = Some(record.run_id.clone());
             store_phase_begin!(profile, PublishTerminal);
-            liveness::write_terminal(store, guard, session.generation(), &envelope)
-                .map_err(|error| publication_error("publish terminal attempt", error))?;
+            lifecycle_context!(profile, PublishTerminal, |lifecycle| {
+                liveness::write_terminal_profiled(
+                    store,
+                    guard,
+                    session.generation(),
+                    &envelope,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })
+            .map_err(|error| publication_error("publish terminal attempt", error))?;
             store_phase_end!(profile, PublishTerminal);
             hit_after_terminal_attempt();
             Ok((envelope, record))
@@ -205,8 +214,17 @@ fn finalize_under_guard(
     drop(database);
     store_phase_end!(profile, FinalizeCatalog);
     store_phase_begin!(profile, FinalizeLatest);
-    latest::publish_attempt(store, guard, &envelope, true)
-        .map_err(|error| publication_error("publish latest pointer", error))?;
+    lifecycle_context!(profile, FinalizeLatest, |lifecycle| {
+        latest::publish_attempt_profiled(
+            store,
+            guard,
+            &envelope,
+            true,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            lifecycle,
+        )
+    })
+    .map_err(|error| publication_error("publish latest pointer", error))?;
     store_phase_end!(profile, FinalizeLatest);
     store_phase_begin!(profile, FinalizeRelease);
     liveness::release_session(store, guard, session)
@@ -315,12 +333,19 @@ fn publish_directory(
     }
 
     store_phase_begin!(profile, StagingCreate);
-    guard
-        .mutate_for_generation(generation, || {
-            fs::create_dir(&staging).map_err(io_error)?;
-            parent.sync_directory()
-        })
-        .map_err(|error| publication_error("create staging directory", error))?;
+    lifecycle_context!(profile, StagingCreate, |lifecycle| guard
+        .mutate_for_generation_profiled(
+            generation,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            lifecycle,
+            |#[cfg(feature = "audit-lifecycle-test-profile")] mut lifecycle: Option<
+                &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+            >| {
+                fs::create_dir(&staging).map_err(io_error)?;
+                lifecycle_cost!(lifecycle, DirectorySync, parent.sync_directory())
+            }
+        ))
+    .map_err(|error| publication_error("create staging directory", error))?;
     store_phase_end!(profile, StagingCreate);
     let staging_write_entry = HeldEntry::open(
         &staging,
@@ -356,39 +381,54 @@ fn publish_directory(
     drop(staging_write_entry);
 
     store_phase_begin!(profile, StagingMove);
-    guard
-        .mutate_for_generation(generation, || {
-            validate_written_directory(&staging, &staging_entry, &record, evidence.row())
-                .map_err(|error| publication_error("revalidate staging payload", error))?;
-            guard.validate_bound_entries()?;
-            staging_entry.validate_path(
-                &staging,
-                EntryKind::Directory,
-                EntryAccess::Move,
-                false,
-                "run staging directory before publication",
-            )?;
-            #[cfg(feature = "namespace-test-crash")]
-            crate::namespace::barrier::wait_before_run_rename()?;
-            move_entry_noreplace(
-                parent,
-                staging.file_name().ok_or_else(|| {
-                    StoreError::Integrity("run staging path has no child name".to_owned())
-                })?,
-                &staging_entry,
-                parent,
-                OsStr::new(run_id.as_str()),
-            )?;
-            parent.sync_directory()?;
-            staging_entry.validate_path(
-                &published,
-                EntryKind::Directory,
-                EntryAccess::Move,
-                false,
-                "published run directory",
-            )
-        })
-        .map_err(|error| publication_error("rename staging directory", error))?;
+    lifecycle_context!(profile, StagingMove, |lifecycle| guard
+        .mutate_for_generation_profiled(
+            generation,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            lifecycle,
+            |#[cfg(feature = "audit-lifecycle-test-profile")] mut lifecycle: Option<
+                &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+            >| {
+                validate_written_directory(&staging, &staging_entry, &record, evidence.row())
+                    .map_err(|error| publication_error("revalidate staging payload", error))?;
+                lifecycle_cost!(
+                    lifecycle,
+                    NamespaceValidation,
+                    guard.validate_bound_entries()
+                )?;
+                staging_entry.validate_path(
+                    &staging,
+                    EntryKind::Directory,
+                    EntryAccess::Move,
+                    false,
+                    "run staging directory before publication",
+                )?;
+                #[cfg(feature = "namespace-test-crash")]
+                crate::namespace::barrier::wait_before_run_rename()?;
+                lifecycle_cost!(
+                    lifecycle,
+                    PublicationMove,
+                    move_entry_noreplace(
+                        parent,
+                        staging.file_name().ok_or_else(|| {
+                            StoreError::Integrity("run staging path has no child name".to_owned())
+                        })?,
+                        &staging_entry,
+                        parent,
+                        OsStr::new(run_id.as_str()),
+                    )
+                )?;
+                lifecycle_cost!(lifecycle, DirectorySync, parent.sync_directory())?;
+                staging_entry.validate_path(
+                    &published,
+                    EntryKind::Directory,
+                    EntryAccess::Move,
+                    false,
+                    "published run directory",
+                )
+            }
+        ))
+    .map_err(|error| publication_error("rename staging directory", error))?;
     store_phase_end!(profile, StagingMove);
     store_phase_begin!(profile, PublishedValidation);
     revalidate_directory_identity(&published, &staging_entry, &record)

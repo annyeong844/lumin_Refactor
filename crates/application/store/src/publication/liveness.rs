@@ -39,7 +39,14 @@ pub(super) fn begin<'store>(
         AttemptExit,
         |guard| {
             store_phase_begin!(profile, AttemptRecoverLatest);
-            latest::ensure(store, guard)?;
+            lifecycle_context!(profile, AttemptRecoverLatest, |lifecycle| {
+                latest::ensure_profiled(
+                    store,
+                    guard,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
             store_phase_end!(profile, AttemptRecoverLatest);
             store_phase_begin!(profile, AttemptRecoverLeases);
             recovery::recover_under_guard(store, guard)?;
@@ -63,7 +70,16 @@ pub(super) fn begin<'store>(
             hit_after_allocation();
 
             store_phase_begin!(profile, AttemptDirectory);
-            create_attempt_directory(store, guard, &lease.attempt_id, lease.generation)?;
+            lifecycle_context!(profile, AttemptDirectory, |lifecycle| {
+                create_attempt_directory(
+                    store,
+                    guard,
+                    &lease.attempt_id,
+                    lease.generation,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
             store_phase_end!(profile, AttemptDirectory);
             let envelope = AttemptEnvelope {
                 schema_version: "lumin-attempt.v1".to_owned(),
@@ -91,7 +107,16 @@ pub(super) fn begin<'store>(
             store_phase_end!(profile, AttemptEnvelope);
 
             store_phase_begin!(profile, AttemptLatest);
-            latest::publish_attempt(store, guard, &envelope, false)?;
+            lifecycle_context!(profile, AttemptLatest, |lifecycle| {
+                latest::publish_attempt_profiled(
+                    store,
+                    guard,
+                    &envelope,
+                    false,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
             store_phase_end!(profile, AttemptLatest);
             hit_after_latest_running();
             Ok(AttemptSession {
@@ -150,7 +175,14 @@ pub(super) fn recover(
         OpenRecoveryExit,
         |guard| {
             store_phase_begin!(profile, OpenRecoveryLatest);
-            latest::ensure(store, guard)?;
+            lifecycle_context!(profile, OpenRecoveryLatest, |lifecycle| {
+                latest::ensure_profiled(
+                    store,
+                    guard,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
             store_phase_end!(profile, OpenRecoveryLatest);
             store_phase_begin!(profile, OpenRecoveryLeases);
             let result = recovery::recover_under_guard(store, guard);
@@ -250,11 +282,21 @@ pub(super) fn validate_snapshot_locks(
     records::validate_snapshot_locks(rows, guard)
 }
 
-pub(super) fn has_active_lease(
+pub(super) fn has_active_lease_profiled(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<bool, StoreError> {
-    let Some(lease) = records::read(guard, attempt_id)? else {
+    let lease = records::read_profiled(
+        guard,
+        attempt_id,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    );
+    lifecycle_end!(profile, DatabaseReturnTail);
+    let Some(lease) = lease? else {
         return Ok(false);
     };
     if lease.state == AttemptLeaseState::Allocating {
@@ -353,20 +395,48 @@ pub(super) fn write_terminal(
     generation: StoreGeneration,
     envelope: &AttemptEnvelope,
 ) -> Result<(), StoreError> {
+    write_terminal_profiled(
+        store,
+        guard,
+        generation,
+        envelope,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn write_terminal_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    generation: StoreGeneration,
+    envelope: &AttemptEnvelope,
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
     latest::validate_attempt_envelope(envelope)?;
     let directory = guard.open_managed_child_directory(
         ManagedStateParentKind::Attempts,
         envelope.attempt_id.as_str(),
         "attempt directory",
     )?;
-    guard.mutate_for_generation(generation, || {
-        files::write_json(
-            &attempt_path(store, &envelope.attempt_id),
-            &directory,
-            "attempt envelope",
-            envelope,
-        )
-    })
+    guard.mutate_for_generation_profiled(
+        generation,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+        |#[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| {
+            files::write_json_profiled(
+                &attempt_path(store, &envelope.attempt_id),
+                &directory,
+                "attempt envelope",
+                envelope,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile,
+            )
+        },
+    )
 }
 
 fn create_attempt_directory(
@@ -374,6 +444,9 @@ fn create_attempt_directory(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
     generation: StoreGeneration,
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<(), StoreError> {
     let path = attempt_directory(store, attempt_id);
     if entry_exists(&path)? {
@@ -383,10 +456,17 @@ fn create_attempt_directory(
         )));
     }
     let parent = guard.managed_parent_entry(ManagedStateParentKind::Attempts)?;
-    guard.mutate_for_generation(generation, || {
-        fs::create_dir(&path).map_err(io_error)?;
-        parent.sync_directory()
-    })
+    guard.mutate_for_generation_profiled(
+        generation,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+        |#[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| {
+            fs::create_dir(&path).map_err(io_error)?;
+            lifecycle_cost!(profile, DirectorySync, parent.sync_directory())
+        },
+    )
 }
 
 fn hit_before_allocation() {

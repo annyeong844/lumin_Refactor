@@ -19,5 +19,7 @@ pub use generated_path_codec::{PATH_CODEC_ARTIFACT_SHA256, PATH_CODEC_TABLE_SHA2
 pub use identity::*;
 pub use path::*;
 pub use root::*;
+#[cfg(feature = "audit-lifecycle-test-profile")]
+pub mod audit_lifecycle_diagnostic;
 #[cfg(feature = "audit-store-test-profile")]
 pub mod audit_store_diagnostic;

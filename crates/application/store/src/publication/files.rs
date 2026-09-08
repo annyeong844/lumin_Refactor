@@ -35,6 +35,30 @@ pub(super) fn write_json<T: Serialize>(
     write_json_with_hooks(path, parent, label, value, || {}, || Ok(()), || {})
 }
 
+pub(super) fn write_json_profiled<T: Serialize>(
+    path: &Path,
+    parent: &HeldEntry,
+    label: &str,
+    value: &T,
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
+    write_json_with_hooks_profiled(
+        path,
+        parent,
+        label,
+        value,
+        || {},
+        |#[cfg(feature = "audit-lifecycle-test-profile")] _profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| Ok(()),
+        || {},
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+    )
+}
+
 pub(super) fn write_json_with_hooks<T: Serialize>(
     path: &Path,
     parent: &HeldEntry,
@@ -44,14 +68,62 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
     before_replace: impl FnOnce() -> Result<(), StoreError>,
     after_replace: impl FnOnce(),
 ) -> Result<(), StoreError> {
+    write_json_with_hooks_profiled(
+        path,
+        parent,
+        label,
+        value,
+        after_pending,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        |_profile: Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>| before_replace(),
+        #[cfg(not(feature = "audit-lifecycle-test-profile"))]
+        before_replace,
+        after_replace,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_json_with_hooks_profiled<T: Serialize>(
+    path: &Path,
+    parent: &HeldEntry,
+    label: &str,
+    value: &T,
+    after_pending: impl FnOnce(),
+    #[cfg(feature = "audit-lifecycle-test-profile")] before_replace: impl FnOnce(
+        Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>,
+    ) -> Result<
+        (),
+        StoreError,
+    >,
+    #[cfg(not(feature = "audit-lifecycle-test-profile"))] before_replace: impl FnOnce() -> Result<
+        (),
+        StoreError,
+    >,
+    after_replace: impl FnOnce(),
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(serialization_error)?;
     bytes.push(b'\n');
     let pending = path.with_extension("json.pending");
-    remove_pending(&pending, parent, label)?;
+    remove_pending_profiled(
+        &pending,
+        parent,
+        label,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
 
     let pending_entry = HeldEntry::create_new_movable(&pending, label)?;
     require_parent_volume(&pending_entry, parent, label)?;
-    pending_entry.replace_contents(&bytes)?;
+    lifecycle_cost!(
+        profile,
+        JsonWriteFlush,
+        pending_entry.replace_contents(&bytes)
+    )?;
     after_pending();
 
     let replace_existing = entry_exists(path)?;
@@ -61,7 +133,10 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
     if let Some(current) = current.as_ref() {
         require_parent_volume(current, parent, label)?;
     }
-    before_replace()?;
+    before_replace(
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
     let pending_name = pending.file_name().ok_or_else(|| {
         StoreError::Integrity(format!("{label} pending path has no final component"))
     })?;
@@ -69,12 +144,20 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
         .file_name()
         .ok_or_else(|| StoreError::Integrity(format!("{label} path has no final component")))?;
     if replace_existing {
-        replace_entry_atomic(parent, pending_name, &pending_entry, published_name)?;
+        lifecycle_cost!(
+            profile,
+            PublicationMove,
+            replace_entry_atomic(parent, pending_name, &pending_entry, published_name)
+        )?;
     } else {
-        move_entry_noreplace(parent, pending_name, &pending_entry, parent, published_name)?;
+        lifecycle_cost!(
+            profile,
+            PublicationMove,
+            move_entry_noreplace(parent, pending_name, &pending_entry, parent, published_name)
+        )?;
     }
     after_replace();
-    parent.sync_directory()?;
+    lifecycle_cost!(profile, DirectorySync, parent.sync_directory())?;
 
     let published = HeldEntry::open(
         path,
@@ -105,18 +188,63 @@ pub(super) fn validate_and_remove_pending<T: DeserializeOwned>(
     label: &str,
     validate: impl FnOnce(&T) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
+    validate_and_remove_pending_profiled(
+        path,
+        parent,
+        label,
+        |value,
+         #[cfg(feature = "audit-lifecycle-test-profile")] _profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| validate(value),
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn validate_and_remove_pending_profiled<T: DeserializeOwned>(
+    path: &Path,
+    parent: &HeldEntry,
+    label: &str,
+    #[cfg(feature = "audit-lifecycle-test-profile")] validate: impl FnOnce(
+        &T,
+        Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>,
+    )
+        -> Result<(), StoreError>,
+    #[cfg(not(feature = "audit-lifecycle-test-profile"))] validate: impl FnOnce(
+        &T,
+    ) -> Result<
+        (),
+        StoreError,
+    >,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
     if !entry_exists(path)? {
         return Ok(());
     }
     let value = read_json(path, parent, label)?;
-    validate(&value)?;
-    remove_pending(path, parent, label)
+    validate(
+        &value,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    remove_pending_profiled(
+        path,
+        parent,
+        label,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+    )
 }
 
-pub(super) fn remove_pending(
+fn remove_pending_profiled(
     path: &Path,
     parent: &HeldEntry,
     label: &str,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<(), StoreError> {
     if !entry_exists(path)? {
         return Ok(());
@@ -131,7 +259,7 @@ pub(super) fn remove_pending(
     require_parent_volume(&entry, parent, label)?;
     drop(entry);
     fs::remove_file(path).map_err(io_error)?;
-    parent.sync_directory()
+    lifecycle_cost!(profile, DirectorySync, parent.sync_directory())
 }
 
 pub(super) fn require_parent_volume(

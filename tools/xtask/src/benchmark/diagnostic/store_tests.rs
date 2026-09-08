@@ -55,8 +55,8 @@ fn audit_store_feature_closure_is_exact_and_rejects_an_extra_implication() -> Re
     )
     .map_err(|e| e.to_string())?;
     assert_eq!(
-        store_feature_closure(&policy)?,
-        expected_store_feature_closure()
+        diagnostic_feature_closure(&policy, Version::Store)?,
+        expected_feature_closure(Version::Store)
     );
     let cli = policy["members"]
         .as_array_mut()
@@ -69,8 +69,8 @@ fn audit_store_feature_closure_is_exact_and_rejects_an_extra_implication() -> Re
         .ok_or("features")?
         .push("lifecycle-test-fault".into());
     assert_ne!(
-        store_feature_closure(&policy)?,
-        expected_store_feature_closure()
+        diagnostic_feature_closure(&policy, Version::Store)?,
+        expected_feature_closure(Version::Store)
     );
     Ok(())
 }

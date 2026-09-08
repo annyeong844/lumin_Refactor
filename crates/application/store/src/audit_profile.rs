@@ -50,6 +50,8 @@ macro_rules! store_profile_lock {
 
 #[cfg(feature = "audit-store-test-profile")]
 pub(crate) use recorder::StoreProfiler;
+#[cfg(feature = "audit-lifecycle-test-profile")]
+pub(crate) use recorder::{Clock, MonotonicClock};
 
 #[cfg(feature = "audit-store-test-profile")]
 pub(crate) fn unobserved<T>(
@@ -71,6 +73,12 @@ mod recorder {
         fn now(&self) -> u128;
     }
     pub(crate) struct MonotonicClock(Instant);
+    #[cfg(feature = "audit-lifecycle-test-profile")]
+    impl MonotonicClock {
+        pub(crate) fn new() -> Self {
+            Self(Instant::now())
+        }
+    }
     impl Clock for MonotonicClock {
         fn now(&self) -> u128 {
             self.0.elapsed().as_nanos()
@@ -91,6 +99,16 @@ mod recorder {
         }
     }
     impl<C: Clock> StoreProfiler<C> {
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        pub(crate) fn record_lifecycle(
+            &mut self,
+            row: Result<
+                lumin_model::audit_lifecycle_diagnostic::AuditLifecycleContextObservation,
+                String,
+            >,
+        ) {
+            self.timings.lifecycle.record(self.root, row);
+        }
         fn with_clock(root: AuditStorePhase, clock: C) -> Self {
             let mut timings = AuditStoreTimings::default();
             if root.parent().is_some() {

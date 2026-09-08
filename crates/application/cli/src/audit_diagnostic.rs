@@ -65,9 +65,15 @@ impl PendingAuditDiagnostic {
             .record(AuditPhase::Command, elapsed.as_nanos());
         #[cfg(not(feature = "audit-store-test-profile"))]
         let frame = lumin_protocol::audit_diagnostic::encode(&value).map_err(io::Error::other)?;
-        #[cfg(feature = "audit-store-test-profile")]
+        #[cfg(all(
+            feature = "audit-store-test-profile",
+            not(feature = "audit-lifecycle-test-profile")
+        ))]
         let frame =
             lumin_protocol::audit_store_diagnostic::encode(&value).map_err(io::Error::other)?;
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        let frame =
+            lumin_protocol::audit_lifecycle_diagnostic::encode(&value).map_err(io::Error::other)?;
         stderr.write_all(frame.as_bytes())?;
         stderr.flush()
     }

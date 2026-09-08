@@ -1,4 +1,4 @@
-//! Versioned W2/W3 cold-only comparison; never a performance-budget verdict.
+//! Versioned W2/W3/W7 cold-only comparison; never a performance-budget verdict.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ use super::{archive, fixture, measurement, truth};
 pub(super) enum Version {
     Execution,
     Store,
+    Lifecycle,
 }
 
 impl Version {
@@ -20,12 +21,14 @@ impl Version {
         match self {
             Self::Execution => "audit-execution-test-profile",
             Self::Store => "audit-store-test-profile",
+            Self::Lifecycle => "audit-lifecycle-test-profile",
         }
     }
     fn report_schema(self) -> &'static str {
         match self {
             Self::Execution => "lumin.phase1-cold-audit-diagnostic.v1",
             Self::Store => "lumin.phase1-cold-audit-diagnostic.v2",
+            Self::Lifecycle => "lumin.phase1-cold-audit-diagnostic.v3",
         }
     }
 }
@@ -275,7 +278,7 @@ fn diagnose_cold_audit(version: Version) -> Result<Value, String> {
             archive.complete()?;
         }
         let mut summary = summarize(&samples)?;
-        if version == Version::Store {
+        if version != Version::Execution {
             summary["roundDifferencesNanoseconds"] = round_differences(&samples)?;
         }
         Ok(serde_json::json!({
@@ -386,14 +389,14 @@ fn validate_build_record(
             "diagnostic build record does not use the pinned host target/toolchain".to_owned(),
         );
     }
-    if version == Version::Store {
+    if version != Version::Execution {
         let policy: Value = serde_json::from_slice(
             &fs::read(workspace.join("tools/xtask/dependency-surface-policy.v2.json"))
                 .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
-        let closure = store_feature_closure(&policy)?;
-        if closure != expected_store_feature_closure()
+        let closure = diagnostic_feature_closure(&policy, version)?;
+        if closure != expected_feature_closure(version)
             || record["diagnosticFeatureClosure"] != closure
         {
             return Err("unreviewed or unbound diagnostic feature closure".to_owned());
@@ -418,27 +421,46 @@ fn validate_build_record(
     Ok(record)
 }
 
-fn expected_store_feature_closure() -> Value {
-    serde_json::json!({
+fn expected_feature_closure(version: Version) -> Value {
+    let mut closure = serde_json::json!({
         "lumin-cli":["audit-execution-test-profile","audit-store-test-profile"],
         "lumin-engine":["audit-execution-test-profile","audit-store-test-profile"],
         "lumin-model":["audit-execution-test-profile","audit-store-test-profile"],
         "lumin-protocol":["audit-execution-test-profile","audit-store-test-profile"],
         "lumin-store":["audit-store-test-profile"],
-    })
+    });
+    if version == Version::Lifecycle {
+        for owner in [
+            "lumin-cli",
+            "lumin-engine",
+            "lumin-model",
+            "lumin-protocol",
+            "lumin-store",
+        ] {
+            let mut features = if owner == "lumin-store" {
+                vec!["audit-store-test-profile", "audit-lifecycle-test-profile"]
+            } else {
+                vec![
+                    "audit-execution-test-profile",
+                    "audit-store-test-profile",
+                    "audit-lifecycle-test-profile",
+                ]
+            };
+            features.sort_unstable();
+            closure[owner] = serde_json::json!(features);
+        }
+    }
+    closure
 }
 
 // The source-provenance guard binds this feature graph to Cargo's resolved
 // workspace declarations before building. Resolve its exact requested closure;
 // an extra edge is a failure, not permission granted by a build-record string.
-fn store_feature_closure(policy: &Value) -> Result<Value, String> {
+fn diagnostic_feature_closure(policy: &Value, version: Version) -> Result<Value, String> {
     let members = policy["members"]
         .as_array()
         .ok_or("missing policy members")?;
-    let mut pending = vec![(
-        "lumin-cli".to_owned(),
-        "audit-store-test-profile".to_owned(),
-    )];
+    let mut pending = vec![("lumin-cli".to_owned(), version.feature().to_owned())];
     let mut closure = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
     while let Some((package, feature)) = pending.pop() {
         if !closure
@@ -507,6 +529,9 @@ fn validate_versioned_frame(
         Version::Store => {
             serde_json::to_value(validate_store_frame(bytes, observer, stdout, build, jobs)?)
         }
+        Version::Lifecycle => serde_json::to_value(validate_lifecycle_frame(
+            bytes, observer, stdout, build, jobs,
+        )?),
     }
     .map_err(|error| error.to_string())
 }
@@ -534,6 +559,61 @@ fn validate_store_frame(
     validate_frame_binding(&frame.execution(), observer, stdout, build, jobs)?;
     if frame.store_phases.iter().any(|phase| phase.calls != 1) {
         return Err("fresh cold repository omitted store/bootstrap work".to_owned());
+    }
+    Ok(frame)
+}
+
+fn validate_lifecycle_frame(
+    bytes: &[u8],
+    observer: &Value,
+    stdout: &Value,
+    build: &str,
+    jobs: Option<usize>,
+) -> Result<lumin_protocol::audit_lifecycle_diagnostic::AuditLifecycleDiagnosticDto, String> {
+    let frame = lumin_protocol::audit_lifecycle_diagnostic::decode(bytes)?;
+    validate_frame_binding(&frame.store().execution(), observer, stdout, build, jobs)?;
+    if frame.store_phases.iter().any(|phase| phase.calls != 1) {
+        return Err("fresh cold repository omitted store/bootstrap work".to_owned());
+    }
+    // W7's authored fresh-fixture oracle, not an observation-derived baseline.
+    // The variable validation leaves are checked by the strict DTO decoder.
+    let costs = [
+        "backend-open",
+        "read-admission",
+        "write-admission",
+        "backend-commit",
+        "backend-abort",
+        "database-explicit-drop",
+        "database-return-tail",
+        "json-write-flush",
+        "publication-move",
+        "directory-sync",
+    ];
+    let expected = [
+        [2, 1, 1, 0, 1, 0, 2, 0, 0, 0],
+        [2, 1, 1, 0, 1, 0, 2, 0, 0, 0],
+        [2, 0, 0, 0, 0, 2, 0, 0, 0, 1],
+        [2, 1, 1, 1, 0, 0, 2, 1, 1, 1],
+        [2, 0, 0, 0, 0, 2, 0, 0, 0, 1],
+        [2, 0, 0, 0, 0, 2, 0, 0, 1, 1],
+        [2, 0, 0, 0, 0, 2, 0, 1, 1, 1],
+        [3, 2, 1, 1, 0, 0, 3, 1, 1, 1],
+    ];
+    for (context, counts) in frame.lifecycle_contexts.iter().zip(expected) {
+        for (cost, expected) in costs.into_iter().zip(counts) {
+            if context
+                .costs
+                .iter()
+                .find(|row| row.cost == cost)
+                .map(|row| row.calls)
+                != Some(expected)
+            {
+                return Err(format!(
+                    "fresh lifecycle count mismatch: {} / {cost}",
+                    context.context
+                ));
+            }
+        }
     }
     Ok(frame)
 }
@@ -655,3 +735,6 @@ mod tests;
 
 #[cfg(test)]
 mod store_tests;
+
+#[cfg(test)]
+mod lifecycle_tests;

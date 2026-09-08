@@ -1,5 +1,7 @@
 #[macro_use]
 mod audit_profile;
+#[macro_use]
+mod audit_lifecycle_profile;
 mod cache;
 mod gate;
 mod generation;
@@ -757,7 +759,22 @@ fn read_catalog_record(
     database: &namespace::StoreDatabase<'_>,
     run_id: &RunId,
 ) -> Result<RunCatalogRecord, StoreError> {
-    let read = database.begin_read()?;
+    read_catalog_record_profiled(
+        database,
+        run_id,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+fn read_catalog_record_profiled(
+    database: &namespace::StoreDatabase<'_>,
+    run_id: &RunId,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<RunCatalogRecord, StoreError> {
+    let read = lifecycle_cost!(profile, ReadAdmission, database.begin_read())?;
     let table = read.open_table(RUN_CATALOG).map_err(backend_error)?;
     let value = table
         .get(run_id.as_str())

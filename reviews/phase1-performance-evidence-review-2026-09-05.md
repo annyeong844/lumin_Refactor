@@ -25,21 +25,24 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34135740840)
-on head `95163f586f2d9ea9dcae7f356d94e10469ec84e9` / merge checkout
-`aa1288238565d4e318e976a818b503128cfd10bd` passes 56 of 58 jobs, including
+The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34192705416)
+on head `964c91c6c89ec84a5b2b9bb42851caf664464dfa` / merge checkout
+`422a0d48ced4057890b069dcb5f4ed580ed56314` passes 56 of 58 jobs, including
 both builds, staged binary/adapter behavior, and every Windows store and
 integration partition. Both platforms complete all 34 benchmark cells with
 valid semantic truth and process observations. Windows scaling alone misses
-at `0.8692717421027233`; native Linux passes at `0.7089608730181117`, against
+at `0.8858605752999565`; native Linux passes at `0.3445646113969991`, against
 `0.75`. The Windows package benchmark and dependent Required remain failed.
 The ordinary Windows report SHA-256 is
-`6102b65c4d4635ca2caa0947c46fc82ecf260d559cd3a851798ba5f47c99e293`;
+`5c3b1791b14560c44dad0a4c6a737ccf750d8fda93081e7eee17476435c213cc`;
 native Linux report SHA-256 is
-`29ae4a60429f1b231801f52bdca6564b4c4f16bb5b8bfd9a4c65b1bc16e3aaaf`.
+`800f1c3faf7c6c86f3c028323827c5c38a7e5c53d40b41637ba84687d26c14a1`.
 All 745 Windows and 711 Linux capture files match their manifests; all sample
 medians and the complete semantic-map identity were independently rechecked.
 The separate diagnostic is not budget authority. The
+[W6 hosted packet](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md)
+retains the exact job, build, artifact and full verification bindings; different
+hosted machines and sample variance prevent a causal W5/W6 comparison. The
 [initial W5 packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
 retains its independent numeric misses and then-failing test routing.
 The [earlier W4 packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
@@ -155,10 +158,23 @@ hosted four-worker gap. A separate
 was rejected after its control: Rust 1.96.0 still reports 12 processors/eight
 default workers under the launcher's four-CPU affinity. The complete control
 packet is retained, the candidate was not run, and no four-worker result is
-claimed. Actual four-processor Windows verification remains open. The owner
-subsequently approved committing/pushing the verified W6 change to its existing
-draft PR and inspecting its new hosted CI, as recorded in the scoped review.
-This grants no broader optimization, worker-policy change, or budget amendment.
+claimed. The subsequently authorized publication now has
+[actual four-processor hosted evidence](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md):
+all behavioral jobs pass, but Windows scaling still misses. The current diagnostic
+places about 61-63% of engine command time in store-owned regions without
+isolating backend, validation, locking or durability costs. The
+[source investigation](probes/phase1-attempt-session-read-2026-09-08/COST-INVESTIGATION.md)
+routes to the prepared
+[W7 lifecycle-boundary diagnostic](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/DESIGN.md).
+Its [exact author and independent scoped design reviews](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/REVIEW.md)
+pass, and the owner explicitly froze that exact candidate for diagnostic
+implementation. Its [implementation acceptance](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/IMPLEMENTATION.md)
+records completed scoped local Windows/Linux checks; the clean-checkout
+fourteen-cell hosted packet is now authorized and remains unexecuted. W7 distinguishes eight selected
+call contexts and thirteen disjoint API costs without changing existing resource
+lifetimes or claiming raw flush/lock-wait attribution. It establishes no hosted
+performance PASS or optimization authority. W6 grants no broader optimization, worker-policy
+change, or budget amendment.
 
 ## Proposed WSL `/mnt` disposition
 

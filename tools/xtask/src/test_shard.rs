@@ -19,6 +19,7 @@ const STORE_LIB_TEST_MODULES: &[&str] = &[
 ];
 const FEATURE_GATED_TARGETS: &[&str] = &[
     "audit_diagnostic",
+    "audit_lifecycle_diagnostic",
     "audit_store_diagnostic",
     "cache_cleanup_publication_race",
     "lifecycle_operation_idempotency",

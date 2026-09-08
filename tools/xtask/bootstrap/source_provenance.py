@@ -80,6 +80,22 @@ AUDIT_STORE_DIAGNOSTIC_COMMANDS = frozenset(
     }
 )
 
+# W7 preserves the two existing exact command sets and adds no normalized alias.
+AUDIT_LIFECYCLE_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-lifecycle-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-lifecycle-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-lifecycle-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
+DIAGNOSTIC_FEATURES = frozenset({
+    "audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile",
+})
+
 
 class ProvenanceError(RuntimeError):
     """One owned dependency-admission failure."""
@@ -230,12 +246,7 @@ def validate_environment(
         if not _same_path(runner, runner.resolve(strict=False)) or _inside(runner, root):
             raise ProvenanceError(f"GitHub runner temp is redirected or unsafe: {runner}")
         expected_home = runner / "lumin-cargo-home"
-        diagnostic = plan is not None and plan.command in AUDIT_DIAGNOSTIC_COMMANDS
-        store_diagnostic = plan is not None and plan.command in AUDIT_STORE_DIAGNOSTIC_COMMANDS
-        expected_target = runner / (
-            "lumin-audit-store-diagnostic-target" if store_diagnostic else
-            "lumin-audit-diagnostic-target" if diagnostic else "lumin-target"
-        )
+        expected_target = runner / hosted_target_name(plan)
         if not _same_path(cargo_home, expected_home):
             raise ProvenanceError(
                 f"GitHub Cargo home must be job-private {expected_home}, got {cargo_home}"
@@ -249,6 +260,37 @@ def validate_environment(
         if not _same_path(expected_target, expected_target.resolve(strict=False)):
             raise ProvenanceError(f"GitHub Cargo target is redirected: {expected_target}")
     return cargo_home
+
+
+def hosted_target_name(plan: CommandPlan | None) -> str:
+    command = () if plan is None else plan.command
+    for commands, target in (
+        (AUDIT_DIAGNOSTIC_COMMANDS, "lumin-audit-diagnostic-target"),
+        (AUDIT_STORE_DIAGNOSTIC_COMMANDS, "lumin-audit-store-diagnostic-target"),
+        (AUDIT_LIFECYCLE_DIAGNOSTIC_COMMANDS, "lumin-audit-lifecycle-diagnostic-target"),
+    ):
+        if command in commands:
+            return target
+    # This is a rejection detector, not an alternate authorization parser.
+    # Decoder-only manifest edges and post-delimiter probe arguments remain
+    # governed by their existing owners, not by feature-name substrings.
+    before = command[:command.index("--")] if "--" in command else command
+    for index, argument in enumerate(before):
+        features = ""
+        if argument in {"--features", "-F"} and index + 1 < len(before):
+            features = before[index + 1]
+        elif argument.startswith("--features="):
+            features = argument[len("--features="):]
+        elif argument.startswith("-F"):
+            features = argument[2:].removeprefix("=")
+        selected = {item.rsplit("/", 1)[-1] for item in features.replace(",", " ").split()}
+        all_features = argument == "--all-features" and plan is not None and plan.subcommand != "metadata"
+        if selected & DIAGNOSTIC_FEATURES or all_features:
+            raise ProvenanceError(
+                "GitHub Cargo target must be job-private to an exact reviewed diagnostic command; "
+                "unlisted diagnostic selectors are forbidden on every target"
+            )
+    return "lumin-target"
 
 
 def _unredirected_file(path: Path, root: Path, label: str) -> Path:

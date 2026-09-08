@@ -101,6 +101,8 @@ struct Aggregate {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuditStoreTimings {
+    #[cfg(feature = "audit-lifecycle-test-profile")]
+    pub lifecycle: crate::audit_lifecycle_diagnostic::AuditLifecycleTimings,
     aggregates: [Aggregate; 52],
     merged_roots: usize,
     error: Option<String>,
@@ -109,6 +111,8 @@ pub struct AuditStoreTimings {
 impl Default for AuditStoreTimings {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            lifecycle: Default::default(),
             aggregates: [Aggregate::default(); 52],
             merged_roots: 0,
             error: None,
@@ -156,6 +160,8 @@ impl AuditStoreTimings {
         if let Some(error) = incoming.error {
             self.invalidate(error);
         }
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        self.lifecycle.merge_root(root, incoming.lifecycle);
         for phase in AuditStorePhase::ALL {
             let row = incoming.aggregates[phase as usize];
             if phase.root() != root {

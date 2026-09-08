@@ -172,23 +172,19 @@ Owner route: SLICE-001 Sections 12 and 14, AC 16.
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
 The latest completed CI matrices have valid process/semantic observations and
 passing package/adapter behavior on both platforms. Windows scaling still misses
-at `0.8692717421027233` against `0.75`; native Linux passes at
-`0.7089608730181117`. The current hosted run passes 56 of 58 jobs, including
+at `0.8858605752999565` against `0.75`; native Linux passes at
+`0.3445646113969991`. The current hosted run passes 56 of 58 jobs, including
 all Windows store and integration partitions; only the Windows benchmark and
-dependent Required fail. Passing gate-barrier tests do not establish the cause
-of their earlier hosted failures. The complete measurement evidence and next
-bounded session-read candidate are routed through REVIEW-005. Its scoped
-failure-continuation amendment and public counterexample now pass focused
-Windows/Linux verification, with the affected Windows corpus and both staged
-packages passing. Four fresh local comparison packets pass their numeric targets;
-small cold-median reductions and mixed changes elsewhere do not establish a
-material causal speedup. Exact checks and measurements remain in the W6 owner.
-Eight-worker local passes do not resolve the four-worker hosted Windows miss.
-The separate local affinity comparison was rejected for a worker-topology
-mismatch; its candidate remains unrun and provides no four-worker exit proof.
-New blocking CI evidence, permanent runtime worker/stage
-observations, allocator cost approval, and the WSL `/mnt` diagnostic disposition
-remain open.
+dependent Required fail. W6's exact hosted verification and the bounded
+store-cost investigation are routed through REVIEW-005. The narrower W7
+diagnostic design has author and independent scoped PASS and explicit owner
+freeze. Its diagnostic implementation passes the scoped local Windows/Linux
+checks; publication and the clean-checkout fourteen-cell hosted packet are
+authorized and pending. No optimization is approved. Different hosted
+machines, local eight-worker passes, and the rejected affinity comparison do
+not establish a controlled speedup or resolve the four-worker Windows miss.
+Passing blocking CI evidence, permanent runtime worker/stage observations,
+allocator cost approval, and the WSL `/mnt` diagnostic disposition remain open.
 
 - [ ] Run the blocking Windows and native-Linux benchmark matrix against the
   completed public binary and frozen fixtures.

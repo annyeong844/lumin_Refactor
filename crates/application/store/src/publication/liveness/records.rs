@@ -193,12 +193,27 @@ pub(super) fn mark_releasing(
     Ok(releasing)
 }
 
-pub(super) fn read(
+pub(super) fn read_profiled(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<Option<AttemptLeaseRecord>, StoreError> {
-    let database = guard.open_database()?;
-    read_lease(&database, attempt_id)
+    let database = guard.open_database_profiled(
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    let result = read_lease_profiled(
+        &database,
+        attempt_id,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    );
+    if result.is_ok() {
+        lifecycle_begin!(profile, DatabaseReturnTail);
+    }
+    result
 }
 
 pub(super) fn read_session(
@@ -258,7 +273,22 @@ fn read_lease(
     database: &StoreDatabase<'_>,
     attempt_id: &AttemptId,
 ) -> Result<Option<AttemptLeaseRecord>, StoreError> {
-    let read = database.begin_read()?;
+    read_lease_profiled(
+        database,
+        attempt_id,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+fn read_lease_profiled(
+    database: &StoreDatabase<'_>,
+    attempt_id: &AttemptId,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<Option<AttemptLeaseRecord>, StoreError> {
+    let read = lifecycle_cost!(profile, ReadAdmission, database.begin_read())?;
     let table = match read.open_table(ATTEMPT_LEASES) {
         Ok(table) => table,
         Err(TableError::TableDoesNotExist(_)) => return Ok(None),
