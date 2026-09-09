@@ -488,7 +488,7 @@ fn read_attempt(root: &Path, id: &str) -> TestResult<Value> {
     .map_err(Into::into)
 }
 
-fn session_filesystem_snapshot(root: &Path) -> TestResult<Vec<TreeEntry>> {
+pub(super) fn session_filesystem_snapshot(root: &Path) -> TestResult<Vec<TreeEntry>> {
     let state = root.join(".lumin");
     let mut entries = vec![TreeEntry {
         relative: ".".to_owned(),

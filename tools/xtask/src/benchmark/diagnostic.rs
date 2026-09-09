@@ -575,7 +575,7 @@ fn validate_lifecycle_frame(
     if frame.store_phases.iter().any(|phase| phase.calls != 1) {
         return Err("fresh cold repository omitted store/bootstrap work".to_owned());
     }
-    // W7's authored fresh-fixture oracle, not an observation-derived baseline.
+    // W8's reviewed empty-index amendment to W7's authored fresh-fixture oracle.
     // The variable validation leaves are checked by the strict DTO decoder.
     let costs = [
         "backend-open",
@@ -590,8 +590,8 @@ fn validate_lifecycle_frame(
         "directory-sync",
     ];
     let expected = [
-        [2, 1, 1, 0, 1, 0, 2, 0, 0, 0],
-        [2, 1, 1, 0, 1, 0, 2, 0, 0, 0],
+        [1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
+        [1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
         [2, 0, 0, 0, 0, 2, 0, 0, 0, 1],
         [2, 1, 1, 1, 0, 0, 2, 1, 1, 1],
         [2, 0, 0, 0, 0, 2, 0, 0, 0, 1],

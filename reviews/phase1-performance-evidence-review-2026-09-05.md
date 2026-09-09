@@ -25,25 +25,22 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34192705416)
-on head `964c91c6c89ec84a5b2b9bb42851caf664464dfa` / merge checkout
-`422a0d48ced4057890b069dcb5f4ed580ed56314` passes 56 of 58 jobs, including
-both builds, staged binary/adapter behavior, and every Windows store and
-integration partition. Both platforms complete all 34 benchmark cells with
-valid semantic truth and process observations. Windows scaling alone misses
-at `0.8858605752999565`; native Linux passes at `0.3445646113969991`, against
-`0.75`. The Windows package benchmark and dependent Required remain failed.
-The ordinary Windows report SHA-256 is
-`5c3b1791b14560c44dad0a4c6a737ccf750d8fda93081e7eee17476435c213cc`;
-native Linux report SHA-256 is
-`800f1c3faf7c6c86f3c028323827c5c38a7e5c53d40b41637ba84687d26c14a1`.
-All 745 Windows and 711 Linux capture files match their manifests; all sample
-medians and the complete semantic-map identity were independently rechecked.
-The separate diagnostic is not budget authority. The
-[W6 hosted packet](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md)
-retains the exact job, build, artifact and full verification bindings; different
-hosted machines and sample variance prevent a causal W5/W6 comparison. The
-[initial W5 packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
+The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34241768722)
+on head `4f03cc1f8a25e83265a81c0fb1b2c604ce6ee8bf` / merge checkout
+`5c13e1e5faad50cff9ed37d9243cc80723e221fc` passes 55 of 58 jobs, including
+both lint/build paths and staged binary/adapter behavior. Both platforms
+complete all 34 benchmark cells with valid semantic truth and process
+observations. Windows scaling misses at `0.9609594999583402`, native Linux at
+`0.8562792222437678`, against `0.75`; their other numeric targets pass. Both
+package benchmarks and dependent Required remain failed. All 745 Windows,
+711 Linux and 379 diagnostic capture files match their complete manifests;
+every median, count vector and semantic-map identity was independently
+rechecked. The [W7 hosted packet](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md#lint-correction-hosted-verification)
+retains exact job/build/artifact hashes and full verification bindings. Its
+separate diagnostic is not budget authority. Different hosted machines and
+sample variance prevent causal comparisons with the retained
+[W6 hosted packet](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md).
+The [initial W5 packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
 retains its independent numeric misses and then-failing test routing.
 The [earlier W4 packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
 and [invalid/missed W3 packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
@@ -130,7 +127,7 @@ change. Those tests pass in the current hosted run, without establishing the
 earlier failures' cause or invalidating their evidence. The current Windows
 scaling miss still blocks acceptance.
 
-The current bounded implementation is
+The preceding bounded implementation is
 [W6 generation-bound attempt-session read](probes/phase1-attempt-session-read-2026-09-08/DESIGN.md),
 with its [scoped review and frozen W6-03 amendment](probes/phase1-attempt-session-read-2026-09-08/REVIEW.md).
 It proposes replacing two consecutive backend lifetimes inside one session
@@ -160,7 +157,7 @@ default workers under the launcher's four-CPU affinity. The complete control
 packet is retained, the candidate was not run, and no four-worker result is
 claimed. The subsequently authorized publication now has
 [actual four-processor hosted evidence](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md):
-all behavioral jobs pass, but Windows scaling still misses. The current diagnostic
+all behavioral jobs pass, but Windows scaling still misses. That diagnostic
 places about 61-63% of engine command time in store-owned regions without
 isolating backend, validation, locking or durability costs. The
 [source investigation](probes/phase1-attempt-session-read-2026-09-08/COST-INVESTIGATION.md)
@@ -170,16 +167,35 @@ Its [exact author and independent scoped design reviews](probes/phase1-lifecycle
 pass, and the owner explicitly froze that exact candidate for diagnostic
 implementation. Its [implementation acceptance](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/IMPLEMENTATION.md)
 records completed scoped local Windows/Linux checks. The authorized
-[fourteen-cell hosted packet](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md)
-is complete: its captures and frozen counts verify, Windows ordinary scaling
-still misses at `0.8112449801169962`, and both actual packages/adapters pass.
-Two ordinary lint jobs additionally found one test-only feature-off callback;
-its correction passes local tests and exact Windows/Linux workspace Clippy,
-but requires clean hosted verification. W7 distinguishes eight selected
+[fourteen-cell hosted packet](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md#lint-correction-hosted-verification)
+is complete: its captures and frozen counts verify, both ordinary scaling
+targets still miss, and both actual packages/adapters pass. The test-only
+feature-off callback correction also passes its clean hosted lint verification.
+W7 distinguishes eight selected
 call contexts and thirteen disjoint API costs without changing existing resource
 lifetimes or claiming raw flush/lock-wait attribution. It establishes no hosted
 performance PASS or optimization authority. W6 grants no broader optimization, worker-policy
 change, or budget amendment.
+
+The active scoped candidate is
+[W8 empty latest-index read-through](probes/phase1-empty-latest-read-2026-09-09/DESIGN.md).
+It proposes removing only the redundant second backend/write/abort when one
+exclusive call has proven canonical latest absent and the entire pointer table
+empty, retaining original-held completion and rejection authority. Its
+[author and independent design review](probes/phase1-empty-latest-read-2026-09-09/REVIEW.md)
+passes for the exact candidate, which the owner has frozen for scoped
+implementation and local Windows/Linux verification. Its
+[implementation record](probes/phase1-empty-latest-read-2026-09-09/IMPLEMENTATION.md)
+has independent scoped source PASS and completed scoped local correctness,
+package/adapter and actual release-child verification on both platforms.
+Its four fresh ordinary [comparison packets](probes/phase1-empty-latest-read-2026-09-09/MEASUREMENTS.md)
+pass local numeric and integrity checks, including 2,912 hashed captures and
+identical full 256-entry semantic mappings. The timings are mixed; they do not
+establish a causal speedup or resolve hosted scaling. Broad backend reuse and
+read-only substitution remain excluded. P1-60/P1-70 stay open. The separate
+[publication approval](probes/phase1-empty-latest-read-2026-09-09/REVIEW.md#publication-approval)
+permits committing/pushing W8 and checking one resulting public CI run while
+PR #135 remains Draft; it grants no broader optimization or merge authority.
 
 ## Proposed WSL `/mnt` disposition
 

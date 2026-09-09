@@ -1,7 +1,7 @@
 # W7 Hosted Diagnostic Evidence
 
 Owner: [REVIEW-005](../../phase1-performance-evidence-review-2026-09-05.md).
-Status: **complete diagnostic observation; Windows scaling FAIL; no Phase 1 exit**.
+Status: **lint correction verified; Windows/Linux scaling FAIL; no Phase 1 exit**.
 
 ## Exact execution and separate failures
 
@@ -146,3 +146,91 @@ budget or product file was changed to obtain this verification.
 P1-60/P1-70 remain open. This packet closes only the authorized W7 measurement,
 not permanent runtime metrics, allocator approval, the `/mnt` disposition, clean
 blocking CI or Phase 1 exit authority.
+
+## Lint-correction hosted verification
+
+The separate authorized correction head
+`4f03cc1f8a25e83265a81c0fb1b2c604ce6ee8bf` completed
+[CI 34241768722](https://github.com/annyeong844/lumin_Refactor/actions/runs/34241768722).
+Both package checkout logs and the diagnostic build record bind actual merge
+`5c13e1e5faad50cff9ed37d9243cc80723e221fc`, with unchanged main parent
+`09ab415546890241de3434b102fde90ee650b214`. All 58 jobs completed: **55 passed,
+three failed**. Both ordinary lint jobs now pass. Windows package
+`102113639659` and Linux package `102113639716` fail only their ordinary
+benchmark step; dependent Required `102120405579` fails as well. Actual
+staged platform/adapter behavior passes on both, as do the Windows W7 build,
+owner/public probes, incompatible-feature rejection and fourteen-cell runner.
+The first run and its lint failure above remain separate retained evidence.
+
+Both ordinary packets have all 34 expected cells and 21 measured samples,
+with four available logical processors and default commands without `--jobs`.
+Their complete semantic oracle and every absolute-time, RSS and executable-size
+target pass. **Scaling alone fails on both platforms**, so neither package job
+nor the aggregate is a PASS.
+
+| Measurement | Windows NTFS | Native Linux | Requirement |
+| --- | ---: | ---: | --- |
+| Cold default median | 1,856,880,300 ns | 363,578,474 ns | <= 30,000 ms |
+| Cold jobs=1 median | 1,932,319,000 ns | 424,602,705 ns | Scaling control |
+| Default/jobs=1 ratio | **0.9609594999583402** | **0.8562792222437678** | <= 0.75 |
+| Peak RSS | 67,010,560 B | 141,623,296 B | <= 536,870,912 B |
+| Packaged executable | 10,503,168 B | 11,942,640 B | <= 12,582,912 B |
+
+Shared ordinary build ID:
+`build_9f5d0e2be352b263009f1766e67e6bc8daa904fa4698f0add16cec72dd66db8c`.
+Windows binary SHA-256:
+`47ddfc99cf1da7a5ad5f41e67a00046f4e67a0f296d0c28e012f2e8caa35397a`;
+Linux binary SHA-256:
+`2aaebdae9c56bbb65929e7f39454970e4d8ff788f9bda00e69ebe48941707c1f`.
+The correction is test-only. Separate hosted runs and variable sample durations
+do not establish that it caused either numeric change; both misses remain
+valid blocking evidence rather than grounds for rerunning until green.
+
+The new diagnostic remains `DIAGNOSTIC_ONLY` with null numeric verdict and
+unchanged W7 fresh counts. Its binary SHA-256 is
+`951cd5cb5988b80d1a9fe405c31e80f7a1c83e21f110393b2fb5a20e7fea4f13`.
+Its fixed-round default observations are:
+
+| Elapsed boundary | Round 1 ns | Round 2 ns | Round 3 ns |
+| --- | ---: | ---: | ---: |
+| Engine command | 1,645,762,400 | 1,902,000,600 | 1,723,913,700 |
+| Eight selected contexts | 440,225,000 | 579,255,600 | 477,702,500 |
+| Backend-open + explicit-drop + return-tail | 324,947,700 | 360,656,200 | 367,290,800 |
+
+The last row comprises 73.81%, 62.26% and 76.89% of the selected contexts,
+or 19.74%, 18.96% and 21.31% of engine time. It again identifies a candidate
+area, not pure backend teardown, kernel wait or device-flush time. Overlapping
+W7/W3/engine views are not additive. Control/diagnostic medians are respectively
+2,033,847,500 / 1,976,199,900 ns for jobs=1 and 1,771,844,300 /
+1,731,330,800 ns for default; no diagnostic duration is subtracted from budgets.
+
+### Second packet provenance
+
+Complete downloads, package job logs and verifier outputs are retained outside
+the repository at `D:/lumin-w7-ci-34241768722/`. The artifact IDs are Windows
+`10063080298`, Linux `10062503340` and diagnostic `10063081222`.
+`run-summary.json` retains all 58 jobs; `artifacts.json` retains the download
+inventory. No measurement or source file was changed during verification.
+
+The previously retained ordinary and W7 verifiers, at their unchanged hashes
+in the table above, independently verify all **1,835 capture files** again:
+Windows 745/34 cells, Linux 711/34, diagnostic 379/14. Checks cover exact
+inventory/bytes, frozen semantic map, every median, process and inherited-job
+receipts, merge/build/PID/worker binding, raw v3 hash/field order, every count
+vector, zero/null shape, residual and W3 containment. The complete 256-tuple
+map has the same independently recomputed identity recorded above. Results
+are `windows-verification.json`, `linux-verification.json` and
+`diagnostic-verification.json`; integrity is VERIFIED, not numeric PASS.
+
+| Second packet record | SHA-256 |
+| --- | --- |
+| Windows report | `df0127964b878d4af9f093ecac179ea0a96125fa702a34e3823201b0e6daaba9` |
+| Windows manifest | `8de4e980a0c5cb2ba2cf934e70a3ddcc99deacd516e9eeeaade4fe22bc298a08` |
+| Linux report | `d0d7de5157b3c50b8736cc24a28d5565cd0091bc012c699ff8afc74e4acd4eb5` |
+| Linux manifest | `5692df83b4024e623595e982c343f1f9bc5ae2b67292954d6027a45a72326b12` |
+| Diagnostic report | `89fdc75125fb6f40b2b57a92de0859647cd6cac7251df74c02d9b62bf6eb06fa` |
+| Diagnostic manifest | `b1ce6d88e47f62d58998f85779a5c4e0378dbd3351afb7e9f834b64fe1a28112` |
+| Diagnostic build record | `ee85d8a99f63e145065a87d5e1bda89bd80fae0e0465077786781f6b306c2a94` |
+
+This closes the correction's clean-hosted lint verification only. P1-60/P1-70,
+both scaling misses and the separately owned remaining decisions stay open.

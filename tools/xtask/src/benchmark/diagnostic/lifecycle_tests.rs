@@ -26,10 +26,11 @@ const COSTS: [&str; 13] = [
     "publication-move",
     "directory-sync",
 ];
-// Positive validation counters are fixture-only. The ten fixed costs are W7 truth.
+// Positive validation counters are fixture-only. W8 amends only the two fresh
+// empty-index rows of the frozen W7 cost contract.
 const COUNTS: [[u64; 13]; 8] = [
-    [1, 2, 2, 1, 1, 1, 0, 1, 0, 2, 0, 0, 0],
-    [1, 2, 2, 1, 1, 1, 0, 1, 0, 2, 0, 0, 0],
+    [1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
+    [1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
     [1, 2, 2, 1, 0, 0, 0, 0, 2, 0, 0, 0, 1],
     [1, 2, 2, 1, 1, 1, 1, 0, 0, 2, 1, 1, 1],
     [1, 2, 2, 1, 0, 0, 0, 0, 2, 0, 0, 0, 1],
@@ -158,6 +159,28 @@ fn audit_lifecycle_fresh_binding_and_zero_absent_counts_are_not_inferred() -> Re
             assert!(validate_fresh(&canonical(forged)?).is_err());
         }
     }
+    Ok(())
+}
+
+#[test]
+fn audit_lifecycle_candidate_rejects_the_previous_fresh_index_vector() -> Result<(), String> {
+    let mut old = value();
+    for index in 0..2 {
+        for (cost, calls) in [1, 2, 2, 1, 1, 1, 0, 1, 0, 2, 0, 0, 0]
+            .into_iter()
+            .enumerate()
+        {
+            old["lifecycleContexts"][index]["costs"][cost]["calls"] = calls.into();
+            old["lifecycleContexts"][index]["costs"][cost]["elapsedNanoseconds"] =
+                if calls == 0 { Value::Null } else { 0.into() };
+        }
+    }
+    let bytes = canonical(old)?;
+    // v3 still transports the old shape, but this build's fresh oracle must not
+    // guess its source version from those counts or accept it as candidate truth.
+    audit_lifecycle_diagnostic::decode(&bytes)?;
+    assert!(validate_fresh(&bytes).is_err());
+    validate_fresh(&canonical(value())?)?;
     Ok(())
 }
 #[test]

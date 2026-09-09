@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use super::*;
 
+mod derivation;
+
 #[test]
 fn unchanged_empty_index_aborts_without_creating_or_committing_a_table()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -274,7 +276,9 @@ fn audit_lifecycle_actual_missing_and_empty_pointer_reads_and_aborts_preserve_st
             let mut recorder = LifecycleProfiler::new(AuditLifecycleContext::OpenRecoveryLatest);
             let result = derive_legacy_document(&store, guard, Some(&mut recorder));
             recorder.end(AuditLifecycleCost::DatabaseReturnTail);
-            let latest = result?;
+            let derived = result?;
+            assert!(derived.empty_index);
+            let latest = derived.latest;
             assert!(latest.latest_attempt.is_none() && latest.latest_completed.is_none());
             let row = recorder.finish().map_err(StoreError::Integrity)?;
             for (cost, count) in [

@@ -5,6 +5,8 @@ use serde_json::Value;
 
 #[path = "state_namespace_replacement/attempt_session.rs"]
 mod attempt_session;
+#[path = "state_namespace_replacement/empty_latest.rs"]
+mod empty_latest;
 #[path = "support/namespace_barrier.rs"]
 mod namespace_barrier;
 mod support;

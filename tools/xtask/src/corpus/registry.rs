@@ -163,6 +163,14 @@ static INV_STATE_LOCK_REPLACEMENT: &[CorpusInvocation] = &[
     inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_final_validation", LifecycleFault),
     inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_with_read_error", LifecycleFault),
     inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_failure_persists_one_failed_attempt", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_foreign_store", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_error_precedes_new_attempt_allocation", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_late_pointer_arrivals", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_replaced_namespace_bindings", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_rejects_extra_store_links", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_preexisting_allocation_recovery", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_orders_waiting_writer_and_migration", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_validation_failures_poison_before_new_allocation", LifecycleFault),
 ];
 #[rustfmt::skip]
 static INV_STATE_LOCK_REPLACEMENT_CRASH: &[CorpusInvocation] = &[
@@ -171,6 +179,14 @@ static INV_STATE_LOCK_REPLACEMENT_CRASH: &[CorpusInvocation] = &[
     inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_after_final_validation", LifecycleCrash),
     inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_preserves_foreign_store_with_read_error", LifecycleCrash),
     inv!("state_namespace_replacement", "attempt_session::generation_bound_attempt_session_read_failure_persists_one_failed_attempt", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_foreign_store", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_error_precedes_new_attempt_allocation", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_late_pointer_arrivals", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_replaced_namespace_bindings", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_rejects_extra_store_links", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_preexisting_allocation_recovery", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_orders_waiting_writer_and_migration", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_validation_failures_poison_before_new_allocation", LifecycleCrash),
 ];
 #[rustfmt::skip]
 static INV_STATE_MANAGED_PARENT_REPLACEMENT: &[CorpusInvocation] = &[
@@ -178,10 +194,12 @@ static INV_STATE_MANAGED_PARENT_REPLACEMENT: &[CorpusInvocation] = &[
     inv!("state_namespace", "public_process_rejects_managed_parent_anchor_and_marker_replacement"),
     inv!("state_namespace", "state_payload_aliases_never_enter_source_evidence_or_gate_writes"),
     inv!("state_namespace_replacement", "managed_parent_replacement_stops_every_guarded_transition", LifecycleFault),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_replaced_namespace_bindings", LifecycleFault),
 ];
 #[rustfmt::skip]
 static INV_STATE_MANAGED_PARENT_REPLACEMENT_CRASH: &[CorpusInvocation] = &[
     inv!("state_namespace_replacement", "managed_parent_replacement_stops_every_guarded_transition", LifecycleCrash),
+    inv!("state_namespace_replacement", "empty_latest::empty_latest_read_preserves_replaced_namespace_bindings", LifecycleCrash),
 ];
 #[rustfmt::skip]
 static INV_LIFECYCLE_MIGRATION: &[CorpusInvocation] = &[

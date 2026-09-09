@@ -500,7 +500,12 @@ impl NamespaceState {
                     }
                     Err(error) => return Err(io_error(error)),
                 },
-                None => FileExt::lock_exclusive(lock.file()).map_err(io_error)?,
+                None => {
+                    #[cfg(feature = "namespace-test-crash")]
+                    barrier::lock_exclusive_for_namespace_test(lock.file())?;
+                    #[cfg(not(feature = "namespace-test-crash"))]
+                    FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+                }
             }
         } else {
             FileExt::lock_shared(lock.file()).map_err(io_error)?;

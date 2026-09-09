@@ -173,7 +173,10 @@ archived hosted observations.
 The authorized publication and clean-checkout fourteen-cell measurement are
 complete; the exact packet is retained in [CI-EVIDENCE.md](CI-EVIDENCE.md).
 The feature-off test adapter correction has passed local ordinary/W7 and exact
-workspace Clippy checks, but still requires its clean hosted verification.
+workspace Clippy checks and its separate
+[clean hosted lint verification](CI-EVIDENCE.md#lint-correction-hosted-verification).
+That run passes 55/58 jobs; Windows and Linux scaling plus dependent Required
+still fail, despite passing staged binary/adapter behavior on both platforms.
 Numeric-budget relaxation and product optimization are not authorized.
 P1-60 and P1-70 remain open; no
 four-worker performance conclusion, permanent-metric completion or merge

@@ -170,19 +170,30 @@ checkout.
 Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
-The latest [W7 hosted packet](reviews/probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md)
+The latest [W7 hosted packet](reviews/probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md#lint-correction-hosted-verification)
 has verified process/semantic observations and passing actual package/adapter
-behavior on both platforms. Windows scaling still misses at
-`0.8112449801169962` against `0.75`; native Linux passes at
-`0.675313176573408`. Its first hosted run passes 54 of 58 jobs: both ordinary
-lint jobs fail on the same test-only callback, and Windows benchmark plus
-dependent Required fail. The callback correction passes focused tests and
-ordinary/W7 plus exact workspace Clippy locally on both platforms; its clean
-hosted verification remains required. The authorized fourteen-cell diagnostic
-is complete and narrows selected backend construction/release costs without
-changing resource lifetimes. No optimization is approved. Different hosted
-machines, local eight-worker passes, and the rejected affinity comparison do
-not establish a controlled speedup or resolve the four-worker Windows miss.
+behavior on both platforms. Windows scaling misses at `0.9609594999583402` and
+native Linux at `0.8562792222437678`, both against `0.75`. The run passes 55 of
+58 jobs: the callback correction now passes both hosted lint jobs, while both
+package benchmarks and dependent Required fail. All 1,835 raw captures verify;
+integrity is not numeric PASS. The authorized fourteen-cell diagnostic is
+complete and narrows selected backend construction/release costs without
+changing resource lifetimes. The active scoped candidate is
+[W8 empty latest-index read-through](reviews/probes/phase1-empty-latest-read-2026-09-09/DESIGN.md),
+with exact owner freeze and independent scoped implementation-source PASS.
+Its [local verification](reviews/probes/phase1-empty-latest-read-2026-09-09/IMPLEMENTATION.md)
+has passing core checks on both platforms and all six affected Windows corpus
+row/mode combinations. Actual packages, adapters and external release-child
+diagnostic checks pass on both platforms. The four fresh ordinary
+[local comparison packets](reviews/probes/phase1-empty-latest-read-2026-09-09/MEASUREMENTS.md)
+all pass their local targets; 2,912 hashed captures and complete 256-entry
+semantic mappings verify. Timings are mixed and do not establish a causal
+speedup or hosted scaling PASS. User applications stayed open. Separate
+[publication approval](reviews/probes/phase1-empty-latest-read-2026-09-09/REVIEW.md#publication-approval)
+permits committing/pushing W8 and checking one resulting CI run, keeping PR #135
+Draft. Its hosted verdict remains pending; no Phase 1 exit is implied.
+Different hosted machines, local eight-worker passes and the rejected affinity
+comparison do not establish a controlled speedup or resolve these misses.
 Passing blocking CI evidence, permanent runtime worker/stage observations,
 allocator cost approval, and the WSL `/mnt` diagnostic disposition remain open.
 

@@ -14,6 +14,12 @@ const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
 const BEFORE_LATEST_INDEX_ABORT: &str = "before-latest-index-abort";
+const AFTER_LATEST_DERIVATION_OPEN: &str = "after-latest-derivation-open";
+const AFTER_LATEST_DERIVATION_OPEN_READ_ERROR: &str = "after-latest-derivation-open-read-error";
+const BEFORE_EMPTY_LATEST_RETURN: &str = "before-empty-latest-return";
+const BEFORE_EMPTY_LATEST_GENERATION_ERROR: &str = "before-empty-latest-return-generation-error";
+const BEFORE_EMPTY_LATEST_RECEIPT_ERROR: &str = "before-empty-latest-return-receipt-error";
+const NAMESPACE_LOCK_CONTENDED: &str = "namespace-lock-contended";
 const AFTER_ATTEMPT_SESSION_OPEN: &str = "after-attempt-session-open";
 const AFTER_ATTEMPT_SESSION_OPEN_READ_ERROR: &str = "after-attempt-session-open-read-error";
 const BEFORE_ATTEMPT_SESSION_RETURN: &str = "before-attempt-session-return";
@@ -25,6 +31,24 @@ const BEFORE_RETENTION_MOVE: &str = "before-retention-move";
 const BEFORE_CACHE_MOVE: &str = "before-cache-move";
 static REACHED: AtomicBool = AtomicBool::new(false);
 static SESSION_READ: AtomicUsize = AtomicUsize::new(0);
+static LATEST_READ: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn lock_exclusive_for_namespace_test(file: &std::fs::File) -> Result<(), StoreError> {
+    use fs2::FileExt;
+    if std::env::var_os(STAGE_ENV).as_deref()
+        != Some(std::ffi::OsStr::new(NAMESPACE_LOCK_CONTENDED))
+    {
+        return FileExt::lock_exclusive(file).map_err(crate::io_error);
+    }
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(()),
+        Err(error) if super::lock_contended(&error) => {
+            wait(NAMESPACE_LOCK_CONTENDED)?;
+            FileExt::lock_exclusive(file).map_err(crate::io_error)
+        }
+        Err(error) => Err(crate::io_error(error)),
+    }
+}
 
 pub(crate) fn wait_after_pre_acquire_validation() -> Result<(), StoreError> {
     wait(AFTER_PRE_ACQUIRE_VALIDATION)
@@ -40,6 +64,83 @@ pub(crate) fn wait_before_store_commit() -> Result<(), StoreError> {
 
 pub(crate) fn wait_before_latest_index_abort() -> Result<(), StoreError> {
     wait(BEFORE_LATEST_INDEX_ABORT)
+}
+
+pub(crate) fn wait_after_latest_derivation_open(
+    database: &super::StoreDatabase<'_>,
+) -> Result<(), StoreError> {
+    let ordinal = LATEST_READ.fetch_add(1, Ordering::SeqCst) + 1;
+    wait_for_latest(AFTER_LATEST_DERIVATION_OPEN, ordinal, database)?;
+    if wait_for_latest(AFTER_LATEST_DERIVATION_OPEN_READ_ERROR, ordinal, database)? {
+        return Err(StoreError::Integrity(
+            "injected latest index read failure".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn wait_before_empty_latest_return(
+    database: &super::StoreDatabase<'_>,
+) -> Result<(), StoreError> {
+    for stage in [
+        BEFORE_EMPTY_LATEST_RETURN,
+        BEFORE_EMPTY_LATEST_GENERATION_ERROR,
+        BEFORE_EMPTY_LATEST_RECEIPT_ERROR,
+    ] {
+        wait_for_latest(stage, LATEST_READ.load(Ordering::SeqCst), database)?;
+    }
+    Ok(())
+}
+
+// Faults are applied only at the SECOND real owner proof, never as the barrier
+// callback's result. The public fixture leaves every durable byte/row intact;
+// raw-header owner tests independently prove the actual generation/receipt checks.
+pub(crate) fn fail_latest_generation_validation_for_test(
+    generation: crate::StoreGeneration,
+) -> Result<(), StoreError> {
+    if latest_final_fault_selected(BEFORE_EMPTY_LATEST_GENERATION_ERROR) {
+        return Err(StoreError::StoreGenerationChanged {
+            expected: generation,
+            observed: generation
+                .checked_next()
+                .ok_or_else(|| StoreError::Integrity("test generation exhausted".to_owned()))?,
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn fail_latest_receipt_validation_for_test() -> Result<(), StoreError> {
+    if latest_final_fault_selected(BEFORE_EMPTY_LATEST_RECEIPT_ERROR) {
+        return Err(StoreError::Integrity(
+            "injected latest validation receipt failure".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn latest_final_fault_selected(stage: &str) -> bool {
+    let stage = match LATEST_READ.load(Ordering::SeqCst) {
+        1 => stage.to_owned(),
+        2 => format!("{stage}:attempt"),
+        _ => return false,
+    };
+    REACHED.load(Ordering::SeqCst)
+        && std::env::var_os(STAGE_ENV).as_deref() == Some(std::ffi::OsStr::new(&stage))
+}
+
+fn wait_for_latest(
+    stage: &str,
+    ordinal: usize,
+    database: &super::StoreDatabase<'_>,
+) -> Result<bool, StoreError> {
+    let stage = match ordinal {
+        1 => stage.to_owned(),
+        2 => format!("{stage}:attempt"),
+        _ => return Ok(false),
+    };
+    wait_with_observation(&stage, || {
+        database.complete_logical_observation_for_test().map(Some)
+    })
 }
 
 pub(crate) fn wait_after_attempt_session_open(
@@ -180,6 +281,16 @@ fn wait_with_observation(
 
 fn is_supported_stage(stage: &str) -> bool {
     if let Some((base, phase)) = stage.split_once(':') {
+        if phase == "attempt" {
+            return matches!(
+                base,
+                AFTER_LATEST_DERIVATION_OPEN
+                    | AFTER_LATEST_DERIVATION_OPEN_READ_ERROR
+                    | BEFORE_EMPTY_LATEST_RETURN
+                    | BEFORE_EMPTY_LATEST_GENERATION_ERROR
+                    | BEFORE_EMPTY_LATEST_RECEIPT_ERROR
+            );
+        }
         return matches!(phase, "finalize" | "release")
             && matches!(
                 base,
@@ -194,6 +305,12 @@ fn is_supported_stage(stage: &str) -> bool {
             | AFTER_COMPLETE_VALIDATION
             | BEFORE_STORE_COMMIT
             | BEFORE_LATEST_INDEX_ABORT
+            | AFTER_LATEST_DERIVATION_OPEN
+            | AFTER_LATEST_DERIVATION_OPEN_READ_ERROR
+            | BEFORE_EMPTY_LATEST_RETURN
+            | BEFORE_EMPTY_LATEST_GENERATION_ERROR
+            | BEFORE_EMPTY_LATEST_RECEIPT_ERROR
+            | NAMESPACE_LOCK_CONTENDED
             | AFTER_ATTEMPT_SESSION_OPEN
             | AFTER_ATTEMPT_SESSION_OPEN_READ_ERROR
             | BEFORE_ATTEMPT_SESSION_RETURN

@@ -212,8 +212,8 @@ fn verify_lifecycle_frame(
         "directory-sync",
     ];
     let mut counts = [
-        [2, 1, 1, 0, 1, 0, 2, 0, 0, 0],
-        [2, 1, 1, 0, 1, 0, 2, 0, 0, 0],
+        [1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
+        [1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
         [2, 0, 0, 0, 0, 2, 0, 0, 0, 1],
         [2, 1, 1, 1, 0, 0, 2, 1, 1, 1],
         [2, 0, 0, 0, 0, 2, 0, 0, 0, 1],
@@ -222,6 +222,9 @@ fn verify_lifecycle_frame(
         [3, 2, 1, 1, 0, 0, 3, 1, 1, 1],
     ];
     if !matches!(fixture, LifecycleFixture::Fresh) {
+        // A canonical document excludes the W8 shortcut on both calls.
+        counts[0] = [2, 1, 1, 0, 1, 0, 2, 0, 0, 0];
+        counts[1] = [2, 1, 1, 0, 1, 0, 2, 0, 0, 0];
         counts[3] = [4, 3, 1, 1, 0, 0, 4, 1, 1, 1];
         counts[7] = [4, 3, 1, 1, 0, 0, 4, 1, 1, 1];
     }

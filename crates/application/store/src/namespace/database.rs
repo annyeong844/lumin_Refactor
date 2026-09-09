@@ -311,10 +311,53 @@ impl<'guard> StoreDatabase<'guard> {
         &self,
         before_return: impl FnOnce() -> Result<(), StoreError>,
     ) -> Result<(), StoreError> {
+        self.finish_held_read(
+            before_return,
+            #[cfg(feature = "namespace-test-crash")]
+            false,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            None,
+        )
+    }
+
+    pub(crate) fn finish_latest_derivation_read(
+        &self,
+        before_return: impl FnOnce() -> Result<(), StoreError>,
+        #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        self.finish_held_read(
+            before_return,
+            #[cfg(feature = "namespace-test-crash")]
+            true,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile,
+        )
+    }
+
+    fn finish_held_read(
+        &self,
+        before_return: impl FnOnce() -> Result<(), StoreError>,
+        #[cfg(feature = "namespace-test-crash")] latest_read: bool,
+        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >,
+    ) -> Result<(), StoreError> {
         let result = (|| {
-            self.validate_attempt_session_read()?;
+            self.validate_held_read(
+                #[cfg(feature = "namespace-test-crash")]
+                false,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile.as_deref_mut(),
+            )?;
             before_return()?;
-            self.validate_attempt_session_read()
+            self.validate_held_read(
+                #[cfg(feature = "namespace-test-crash")]
+                latest_read,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile,
+            )
         })();
         if result.is_err() {
             self.guard.reject_backend_access();
@@ -322,12 +365,38 @@ impl<'guard> StoreDatabase<'guard> {
         result
     }
 
-    fn validate_attempt_session_read(&self) -> Result<(), StoreError> {
+    fn validate_held_read(
+        &self,
+        #[cfg(feature = "namespace-test-crash")] latest_final_proof: bool,
+        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >,
+    ) -> Result<(), StoreError> {
         self.guard.require_backend_access()?;
-        self.guard.validate_bound_entries()?;
-        self.validate_current()?;
-        self.validate_receipt_set_current()?;
-        self.guard.validate_bound_entries()
+        lifecycle_cost!(
+            profile,
+            NamespaceValidation,
+            self.guard.validate_bound_entries()
+        )?;
+        lifecycle_cost!(profile, StoreValidation, self.validate_current())?;
+        #[cfg(feature = "namespace-test-crash")]
+        if latest_final_proof {
+            super::barrier::fail_latest_generation_validation_for_test(self.generation)?;
+        }
+        lifecycle_cost!(
+            profile,
+            StoreValidation,
+            self.validate_receipt_set_current()
+        )?;
+        #[cfg(feature = "namespace-test-crash")]
+        if latest_final_proof {
+            super::barrier::fail_latest_receipt_validation_for_test()?;
+        }
+        lifecycle_cost!(
+            profile,
+            NamespaceValidation,
+            self.guard.validate_bound_entries()
+        )
     }
 
     fn require_generation(&self, expected: StoreGeneration) -> Result<(), StoreError> {

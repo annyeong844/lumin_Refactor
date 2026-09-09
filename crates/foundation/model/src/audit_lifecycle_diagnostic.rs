@@ -203,8 +203,8 @@ mod tests {
     ];
     // Validation counts are positive fixture values, not claimed production counts.
     const FRESH: [[u64; 13]; 8] = [
-        [1, 2, 2, 1, 1, 1, 0, 1, 0, 2, 0, 0, 0],
-        [1, 2, 2, 1, 1, 1, 0, 1, 0, 2, 0, 0, 0],
+        [1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
+        [1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0],
         [1, 2, 2, 1, 0, 0, 0, 0, 2, 0, 0, 0, 1],
         [1, 2, 2, 1, 1, 1, 1, 0, 0, 2, 1, 1, 1],
         [1, 2, 2, 1, 0, 0, 0, 0, 2, 0, 0, 0, 1],
@@ -256,8 +256,8 @@ mod tests {
             }
             sum
         });
-        assert_eq!(&totals[4..], &[5, 4, 2, 2, 8, 9, 3, 4, 6]);
-        assert_eq!(totals[2], 17);
+        assert_eq!(&totals[4..], &[5, 2, 2, 0, 8, 7, 3, 4, 6]);
+        assert_eq!(totals[2], 15);
         Ok(())
     }
     #[test]
