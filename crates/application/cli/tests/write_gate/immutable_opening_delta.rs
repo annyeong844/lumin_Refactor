@@ -167,38 +167,18 @@ fn sealed_stale_close_keeps_the_prior_protected_reads() -> Result<(), Box<dyn st
     let effective_arguments = support::determinism::effective_arguments(&os_arguments)?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
+    let mut command = lumin_command(root.path())?;
+    command
         .args(&effective_arguments)
         .env(
             "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
         )
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let started = Instant::now();
-    let (mut stream, peer) = loop {
-        match listener.accept() {
-            Ok(accepted) => break accepted,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if let Some(status) = child.try_wait()? {
-                    return Err(std::io::Error::other(format!(
-                        "post-write exited before the stale-protection barrier: {status}"
-                    ))
-                    .into());
-                }
-                if started.elapsed() >= Duration::from_secs(30) {
-                    return Err(std::io::Error::other(
-                        "post-write did not reach the stale-protection barrier",
-                    )
-                    .into());
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => return Err(error.into()),
-        }
-    };
+        .stderr(Stdio::piped());
+    let mut child =
+        barrier_child::BarrierChild::spawn(&mut command, "post-write stale-protection")?;
+    let (mut stream, peer) = child.accept(&listener)?;
     assert!(peer.ip().is_loopback());
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;

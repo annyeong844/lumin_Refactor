@@ -54,6 +54,59 @@ DEPENDENCY_TABLES = (
     ("build-dependencies", "build"),
     ("dev-dependencies", "development"),
 )
+# W2's reviewed diagnostic build/test/negative-check step owns this one
+# additional job-private target. Do not admit arbitrary runner-temp children
+# or infer isolation from a feature substring in an unrelated Cargo command.
+AUDIT_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-execution-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "--lib",
+         "--features", "audit-execution-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-execution-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
+# W3 is a distinct target/command binding, not a broader W2 exception.
+AUDIT_STORE_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-store-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-store-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-store-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
+# W7 preserves the two existing exact command sets and adds no normalized alias.
+AUDIT_LIFECYCLE_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-lifecycle-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-lifecycle-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-lifecycle-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
+# W9 remains an exact command/target binding, not a feature-substring exception.
+AUDIT_BOUNDARY_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-boundary-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-boundary-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-boundary-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
+DIAGNOSTIC_FEATURES = frozenset({
+    "audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile", "audit-boundary-test-profile",
+})
 
 
 class ProvenanceError(RuntimeError):
@@ -175,7 +228,10 @@ def _env_get(environment: Mapping[str, str], name: str) -> str | None:
     return matches[0][1] if matches else None
 
 
-def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) -> Path:
+def validate_environment(
+    environment: Mapping[str, str], root: Path, cwd: Path,
+    plan: CommandPlan | None = None,
+) -> Path:
     reject_environment_overrides(environment)
 
     raw_home = _env_get(environment, "CARGO_HOME")
@@ -202,7 +258,7 @@ def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) 
         if not _same_path(runner, runner.resolve(strict=False)) or _inside(runner, root):
             raise ProvenanceError(f"GitHub runner temp is redirected or unsafe: {runner}")
         expected_home = runner / "lumin-cargo-home"
-        expected_target = runner / "lumin-target"
+        expected_target = runner / hosted_target_name(plan)
         if not _same_path(cargo_home, expected_home):
             raise ProvenanceError(
                 f"GitHub Cargo home must be job-private {expected_home}, got {cargo_home}"
@@ -213,7 +269,41 @@ def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) 
             raise ProvenanceError(
                 f"GitHub Cargo target must be job-private {expected_target}"
             )
+        if not _same_path(expected_target, expected_target.resolve(strict=False)):
+            raise ProvenanceError(f"GitHub Cargo target is redirected: {expected_target}")
     return cargo_home
+
+
+def hosted_target_name(plan: CommandPlan | None) -> str:
+    command = () if plan is None else plan.command
+    for commands, target in (
+        (AUDIT_DIAGNOSTIC_COMMANDS, "lumin-audit-diagnostic-target"),
+        (AUDIT_STORE_DIAGNOSTIC_COMMANDS, "lumin-audit-store-diagnostic-target"),
+        (AUDIT_LIFECYCLE_DIAGNOSTIC_COMMANDS, "lumin-audit-lifecycle-diagnostic-target"),
+        (AUDIT_BOUNDARY_DIAGNOSTIC_COMMANDS, "lumin-audit-boundary-diagnostic-target"),
+    ):
+        if command in commands:
+            return target
+    # This is a rejection detector, not an alternate authorization parser.
+    # Decoder-only manifest edges and post-delimiter probe arguments remain
+    # governed by their existing owners, not by feature-name substrings.
+    before = command[:command.index("--")] if "--" in command else command
+    for index, argument in enumerate(before):
+        features = ""
+        if argument in {"--features", "-F"} and index + 1 < len(before):
+            features = before[index + 1]
+        elif argument.startswith("--features="):
+            features = argument[len("--features="):]
+        elif argument.startswith("-F"):
+            features = argument[2:].removeprefix("=")
+        selected = {item.rsplit("/", 1)[-1] for item in features.replace(",", " ").split()}
+        all_features = argument == "--all-features" and plan is not None and plan.subcommand != "metadata"
+        if selected & DIAGNOSTIC_FEATURES or all_features:
+            raise ProvenanceError(
+                "GitHub Cargo target must be job-private to an exact reviewed diagnostic command; "
+                "unlisted diagnostic selectors are forbidden on every target"
+            )
+    return "lumin-target"
 
 
 def _unredirected_file(path: Path, root: Path, label: str) -> Path:
@@ -486,7 +576,8 @@ def _declarations(
 
 
 def inspect_repository(
-    root: Path, environment: Mapping[str, str], cwd: Path
+    root: Path, environment: Mapping[str, str], cwd: Path,
+    plan: CommandPlan | None = None,
 ) -> Repository:
     root = _absolute(root)
     try:
@@ -498,7 +589,7 @@ def inspect_repository(
         raise ProvenanceError(
             f"guard must run from the unredirected repository root {physical_root}"
         )
-    cargo_home = validate_environment(environment, physical_root, physical_cwd)
+    cargo_home = validate_environment(environment, physical_root, physical_cwd, plan)
     reject_cargo_configuration(physical_root, cargo_home)
     root_manifest = _read_toml(physical_root / "Cargo.toml", physical_root, "root manifest")
     _unredirected_file(physical_root / "Cargo.lock", physical_root, "root lockfile")
@@ -1030,6 +1121,8 @@ def _target_applies(target: str | None, lane: str) -> bool:
         return True
     if target == "cfg(windows)":
         return lane == "x86_64-pc-windows-msvc"
+    if target == 'cfg(all(target_os = "linux", target_env = "musl"))':
+        return lane == "x86_64-unknown-linux-musl"
     raise ProvenanceError(f"unsupported target predicate in frozen policy: {target}")
 
 
@@ -1227,7 +1320,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         else:
             plan = validate_command(_parse_command(raw))
         pinned_python(os.environ, root)
-        repository = inspect_repository(root, os.environ, Path.cwd())
+        repository = inspect_repository(root, os.environ, Path.cwd(), plan)
         cargo, host = pinned_cargo(os.environ, root)
         child_environment = pinned_toolchain_environment(os.environ)
         if plan.resolving:

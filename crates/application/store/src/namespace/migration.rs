@@ -3,6 +3,9 @@ mod artifacts;
 mod barrier;
 mod snapshot;
 
+#[cfg(feature = "namespace-test-crash")]
+pub(super) use snapshot::complete_logical_observation_from_database_for_test;
+
 #[cfg(all(feature = "lifecycle-migration-test-fault", not(debug_assertions)))]
 compile_error!("lifecycle-migration-test-fault is restricted to debug test builds");
 
@@ -311,6 +314,19 @@ pub(super) fn remove_bound_root_authorization_for_test(
 }
 
 pub(super) fn admit_ordinary(guard: &NamespaceGuard) -> Result<(), StoreError> {
+    admit_ordinary_profiled(
+        guard,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn admit_ordinary_profiled(
+    guard: &NamespaceGuard,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+) -> Result<(), StoreError> {
     match read_journal(guard)? {
         Some(journal) if journal.phase == MigrationPhase::Terminal => {
             validate_terminal(guard, &journal, true, &mut |_| Ok(())).map(|_| ())
@@ -321,8 +337,16 @@ pub(super) fn admit_ordinary(guard: &NamespaceGuard) -> Result<(), StoreError> {
         }
         None => {
             reject_orphan_migration_artifacts(guard)?;
-            create_or_verify_store(guard)?;
-            let current = open_current_canonical(guard)?;
+            boundary_cost!(
+                profile,
+                NativeStoreVerification,
+                create_or_verify_store(guard)
+            )?;
+            let current = boundary_cost!(
+                profile,
+                NativeStoreVerification,
+                open_current_canonical(guard)
+            )?;
             if current.anchor.is_some() {
                 return Err(StoreError::Integrity(
                     "migrated lifecycle.store omitted its permanent journal".to_owned(),

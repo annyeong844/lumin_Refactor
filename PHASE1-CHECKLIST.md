@@ -169,6 +169,40 @@ checkout.
 
 Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
+Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
+The latest [W9 hosted packet](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/CI-EVIDENCE.md)
+passes 47 of 58 jobs. Both actual staged package/adapter and ordinary benchmark
+jobs pass; their Windows/Linux scaling reports are `0.6774485114105342` and
+`0.5199607512575846` against `0.75`. Overall CI fails because the workflow's
+W7-to-W9 change omitted the separately authored Rust structural policy; its
+failure propagates through core tests, five structural corpus rows and Required.
+All 1,835 archived capture sizes/hashes verify, not an independent semantic or
+numeric acceptance verdict. Earlier misses remain preserved, and these samples
+do not prove a causal speedup. Draft PR #135 remains Draft.
+
+The active scoped implementation is the
+[W9 guard and attempt-release diagnostic](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/DESIGN.md).
+Its [author and independent scoped design reviews](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/REVIEW.md)
+pass for the exact owner-frozen candidate. Its
+[instrumentation implementation](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/IMPLEMENTATION.md)
+and scoped local verification pass: both platforms' ordinary/W9 releases,
+actual v1/v2/v3/v4 release children, staged packages/adapters, scoped owner tests,
+separated Clippy, xtask, launcher and structural checks, plus final format,
+documents and source/artifact binding. The record distinguishes retained
+initial-source Windows feature-off/fault evidence from final-r2-source Linux
+tests. Independent scoped source review also passes. New Cargo commands remain
+gated on host memory headroom.
+It adds nine additional bounded observation regions, distinguishes
+native admission's memory-backed verification from writable file-backend costs,
+and preserves all resource lifetimes and budgets. The owner approved the narrow
+structural-policy correction and one new-head CI after the first run completed.
+The ordinary benchmark and Required outcome remain authoritative; the next
+hosted verdict is not established by local correction checks. This packet does
+not claim whole-store coverage, measured savings or Phase 1 exit; same-head
+reruns and further scope changes require separate approval.
+Passing blocking CI evidence, permanent runtime worker/stage observations,
+allocator cost approval, and the WSL `/mnt` diagnostic disposition remain open.
+
 - [ ] Run the blocking Windows and native-Linux benchmark matrix against the
   completed public binary and frozen fixtures.
 - [ ] Record cold, warm, `jobs=1`, default-jobs, package-size, and peak-memory

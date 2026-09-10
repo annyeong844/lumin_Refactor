@@ -17,8 +17,27 @@ pub(super) struct BaselineObservationSeed {
     pub(super) leased_write_set: Vec<WriteLease>,
     pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub(super) attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
-    pub(super) baseline: Option<GateBaselineDraft>,
+    pub(super) baseline: Option<BaselineObservationData>,
     pub(super) evidence_payload_sha256: Option<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct BaselineObservationData {
+    analysis_contract: String,
+    analysis_input_id: lumin_model::AnalysisInputId,
+    protected_semantic_inputs: Vec<SemanticInputRecord>,
+    transition_sequence: u64,
+}
+
+impl From<&GateBaselineDraft> for BaselineObservationData {
+    fn from(baseline: &GateBaselineDraft) -> Self {
+        Self {
+            analysis_contract: baseline.analysis_contract.clone(),
+            analysis_input_id: baseline.snapshot.analysis_input_id.clone(),
+            protected_semantic_inputs: baseline.protected_semantic_inputs.clone(),
+            transition_sequence: baseline.transition_sequence,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -28,7 +47,7 @@ pub(super) struct CloseObservationSeed {
     pub(super) opening_analysis_contract: Option<String>,
     pub(super) prior_revision: u64,
     pub(super) leased_write_set: Vec<WriteLease>,
-    pub(super) snapshot: Option<lumin_evidence::AnalysisSnapshot>,
+    pub(super) analysis_input_id: Option<lumin_model::AnalysisInputId>,
     pub(super) evidence_payload_sha256: Option<String>,
     pub(super) prior_protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub(super) protected_semantic_inputs: Vec<SemanticInputRecord>,
@@ -119,7 +138,7 @@ pub(super) fn unsealed_close_observation_inputs(
 
 fn baseline_observation_id(
     seed: &BaselineObservationSeed,
-    baseline: &GateBaselineDraft,
+    baseline: &BaselineObservationData,
     evidence_payload_sha256: &str,
     catalog_revision: u64,
     signals: &[GateSignal],
@@ -128,7 +147,7 @@ fn baseline_observation_id(
         catalog_revision,
         transition_sequence: baseline.transition_sequence,
         analysis_contract: &baseline.analysis_contract,
-        analysis_input_id: &baseline.snapshot.analysis_input_id,
+        analysis_input_id: &baseline.analysis_input_id,
         evidence_payload_sha256,
         signals,
         declared_write_set: &seed.declared_write_set,
@@ -241,7 +260,7 @@ fn close_observation_id(
     catalog_revision: u64,
     signals: &[GateSignal],
 ) -> Option<GateCloseObservationId> {
-    let snapshot = seed.snapshot.as_ref()?;
+    let analysis_input_id = seed.analysis_input_id.as_ref()?;
     let opening_observation_id = seed.opening_observation_id.as_ref()?;
     let opening_analysis_contract = seed.opening_analysis_contract.as_ref()?;
     let actual_write_set = seed.actual_write_set.as_ref()?;
@@ -253,7 +272,7 @@ fn close_observation_id(
             opening_analysis_contract,
             prior_revision: seed.prior_revision,
             catalog_revision,
-            analysis_input_id: &snapshot.analysis_input_id,
+            analysis_input_id,
             evidence_payload_sha256,
             signals,
             leased_write_set: &seed.leased_write_set,
@@ -268,9 +287,7 @@ fn close_observation_id(
 
 #[cfg(test)]
 mod tests {
-    use lumin_evidence::{
-        AnalysisMetrics, AnalysisSnapshot, RunEvidence, SemanticInputState, WriteLeaseKind,
-    };
+    use lumin_evidence::{AnalysisMetrics, RunEvidence, SemanticInputState, WriteLeaseKind};
     use lumin_model::{AnalysisInputId, RepoPath};
 
     use super::*;
@@ -310,18 +327,11 @@ mod tests {
         let mut seed = seed("payload")?;
         let unrelated_path =
             RepoPathProjection::from(&RepoPath::from_portable("src/unrelated.ts")?);
-        seed.baseline
-            .as_mut()
-            .ok_or("test seed omitted its baseline")?
-            .snapshot
-            .inputs
-            .push(SemanticInputRecord {
+        seed.attempted_semantic_inputs
+            .push(SemanticReadReservationBinding {
                 path: unrelated_path.clone(),
-                state: SemanticInputState::Source,
-                payload_sha256: Some("unrelated".to_owned()),
                 physical_identity: None,
                 absence_parent: None,
-                physical_redirect_sha256: None,
             });
 
         let ObservationBinding::Unsealed {
@@ -356,7 +366,7 @@ mod tests {
                 nearest_existing_parent: None,
                 prefix_identities: Vec::new(),
             }],
-            snapshot: None,
+            analysis_input_id: None,
             evidence_payload_sha256: None,
             prior_protected_semantic_inputs: vec![SemanticInputRecord {
                 path: protected_path.clone(),
@@ -453,15 +463,9 @@ mod tests {
             leased_write_set: Vec::new(),
             alias_closures: Vec::new(),
             attempted_semantic_inputs: Vec::new(),
-            baseline: Some(GateBaselineDraft {
+            baseline: Some(BaselineObservationData {
                 analysis_contract: "contract".to_owned(),
-                snapshot: AnalysisSnapshot {
-                    analysis_input_id: AnalysisInputId::from_string("analysis-input".to_owned()),
-                    inputs: vec![input.clone()],
-                    scan_invocation: Default::default(),
-                    entry_selections: Vec::new(),
-                    evidence,
-                },
+                analysis_input_id: AnalysisInputId::from_string("analysis-input".to_owned()),
                 protected_semantic_inputs: vec![input],
                 transition_sequence: 3,
             }),

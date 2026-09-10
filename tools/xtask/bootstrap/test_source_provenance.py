@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -320,6 +322,337 @@ class CommandSurfaceTests(unittest.TestCase):
         self.assertEqual(child["RUSTUP_TOOLCHAIN"], "1.96.0")
 
 
+class HostedTargetTests(unittest.TestCase):
+    # Authored from the frozen W2 build step, not the guard's admission table.
+    diagnostic_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-execution-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "--lib",
+         "--features", "audit-execution-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-execution-test-profile,lifecycle-test-fault", "--locked"),
+    )
+    ordinary_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--locked"),
+        ("cargo", "test", "-p", "lumin-cli", "--test", "audit_diagnostic",
+         "--features", "audit-execution-profile-probe", "--locked"),
+        ("cargo", "run", "--locked", "-p", "lumin-xtask", "--", "benchmark",
+         "foundation", "--diagnose-cold-audit"),
+    )
+
+    def invoke(
+        self, fixture: Fixture, command: tuple[str, ...], target: Path | None,
+        *, home: Path | None = None, returncode: int = 0,
+    ) -> tuple[int, str, mock.Mock, mock.Mock]:
+        runner = fixture.base / "runner"
+        hosted_home = runner / "lumin-cargo-home"
+        hosted_home.mkdir(parents=True, exist_ok=True)
+        fixture.cargo_home = hosted_home
+        fixture.registry_manifest = hosted_home / "registry/src/index/serde-1.0.0/Cargo.toml"
+        fixture.registry_manifest.parent.mkdir(parents=True, exist_ok=True)
+        fixture.registry_manifest.write_text(
+            '[package]\nname = "serde"\nversion = "1.0.0"\n', encoding="utf-8"
+        )
+        # Policy creation is independent of hosted target admission.
+        fixture.write_policy(PROVENANCE.build_policy(fixture.inspect(), fixture.metadata()))
+        environment = {
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_TEMP": str(runner),
+            "CARGO_HOME": str(hosted_home if home is None else home),
+        }
+        if target is not None:
+            environment["CARGO_TARGET_DIR"] = str(target)
+        cargo = fixture.base / "toolchain" / "cargo"
+        errors = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, environment, clear=True),
+            mock.patch.object(PROVENANCE, "repository_root", return_value=fixture.root),
+            mock.patch.object(PROVENANCE.Path, "cwd", return_value=fixture.root),
+            mock.patch.object(PROVENANCE, "pinned_python"),
+            mock.patch.object(PROVENANCE, "pinned_cargo", return_value=(
+                cargo, "x86_64-pc-windows-msvc" if os.name == "nt" else "x86_64-unknown-linux-gnu"
+            )),
+            mock.patch.object(PROVENANCE, "run_metadata", return_value=fixture.metadata()) as metadata,
+            mock.patch.object(PROVENANCE.subprocess, "run", return_value=
+                              subprocess.CompletedProcess((), returncode)) as launch,
+            mock.patch.object(PROVENANCE.sys, "stderr", errors),
+        ):
+            status = PROVENANCE.main(("--", *command))
+        if launch.called:
+            launch.assert_called_once_with(
+                (str(cargo), *command[1:]), shell=False, check=False,
+                env={**environment, "RUSTUP_TOOLCHAIN": "1.96.0"},
+            )
+            self.assertEqual(metadata.call_count, 2)
+            self.assertEqual([call.args[1] for call in metadata.call_args_list], [
+                None, "x86_64-pc-windows-msvc" if os.name == "nt" else "x86_64-unknown-linux-gnu"
+            ])
+        return status, errors.getvalue(), metadata, launch
+
+    def test_reviewed_diagnostic_commands_reach_cargo_in_the_isolated_target(self) -> None:
+        for command in self.diagnostic_commands:
+            with self.subTest(command=command), Fixture() as fixture:
+                target = fixture.base / "runner/lumin-audit-diagnostic-target"
+                status, errors, _, launch = self.invoke(fixture, command, target)
+                self.assertEqual((status, errors), (0, ""))
+                self.assertTrue(launch.called)
+
+    def test_control_and_external_probe_commands_keep_the_ordinary_target(self) -> None:
+        for command in self.ordinary_commands:
+            with self.subTest(command=command), Fixture() as fixture:
+                status, errors, _, launch = self.invoke(
+                    fixture, command, fixture.base / "runner/lumin-target"
+                )
+                self.assertEqual((status, errors), (0, ""))
+                self.assertTrue(launch.called)
+
+    def test_target_crossovers_and_unreviewed_commands_fail_before_cargo(self) -> None:
+        cases = [
+            (command, "lumin-target") for command in self.diagnostic_commands
+        ] + [
+            (command, "lumin-audit-diagnostic-target") for command in self.ordinary_commands
+        ] + [
+            ((*self.diagnostic_commands[0], "--target-dir", "other"),
+             "lumin-audit-diagnostic-target"),
+            (("cargo", "test", "--locked", "--", "audit-execution-test-profile"),
+             "lumin-audit-diagnostic-target"),
+        ]
+        for command, name in cases:
+            with self.subTest(command=command, target=name), Fixture() as fixture:
+                status, errors, metadata, launch = self.invoke(
+                    fixture, command, fixture.base / "runner" / name
+                )
+                self.assertEqual(status, 2)
+                self.assertIn("GitHub Cargo target must be job-private", errors)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+    def test_missing_arbitrary_or_repository_target_fails_before_cargo(self) -> None:
+        for suffix in (None, "runner/other-target", "other/lumin-audit-diagnostic-target", "repo/target"):
+            with self.subTest(target=suffix), Fixture() as fixture:
+                target = None if suffix is None else fixture.base / suffix
+                status, _, metadata, launch = self.invoke(fixture, self.diagnostic_commands[0], target)
+                self.assertEqual(status, 2)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+    def test_isolated_target_does_not_admit_a_shared_cargo_home(self) -> None:
+        with Fixture() as fixture:
+            status, errors, metadata, launch = self.invoke(
+                fixture, self.diagnostic_commands[0],
+                fixture.base / "runner/lumin-audit-diagnostic-target", home=fixture.base / "shared"
+            )
+            self.assertEqual(status, 2)
+            self.assertIn("GitHub Cargo home must be job-private", errors)
+            metadata.assert_not_called()
+            launch.assert_not_called()
+
+    def test_redirected_hosted_targets_fail_before_cargo(self) -> None:
+        for command, name in (
+            (self.ordinary_commands[0], "lumin-target"),
+            (self.diagnostic_commands[0], "lumin-audit-diagnostic-target"),
+        ):
+            with self.subTest(target=name), Fixture() as fixture:
+                target = fixture.base / "runner" / name
+                target.parent.mkdir()
+                destination = fixture.base / "redirected-target"
+                destination.mkdir()
+                if os.name == "nt":
+                    # Junction creation needs no symlink privilege on Windows.
+                    subprocess.run(
+                        ("cmd", "/c", "mklink", "/J", str(target), str(destination)),
+                        shell=False, check=True, capture_output=True,
+                    )
+                else:
+                    target.symlink_to(destination, target_is_directory=True)
+                status, errors, metadata, launch = self.invoke(fixture, command, target)
+                self.assertEqual(status, 2)
+                self.assertIn("GitHub Cargo target is redirected", errors)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+    def test_diagnostic_cargo_failure_is_not_converted_to_success(self) -> None:
+        with Fixture() as fixture:
+            status, errors, _, launch = self.invoke(
+                fixture, self.diagnostic_commands[2],
+                fixture.base / "runner/lumin-audit-diagnostic-target", returncode=101
+            )
+            self.assertEqual((status, errors), (101, ""))
+            self.assertTrue(launch.called)
+
+
+class HostedStoreTargetTests(HostedTargetTests):
+    # Independently authored W3 vectors; inherited tests exercise the same
+    # real guard entrypoint, isolation failures, and Cargo exit propagation.
+    diagnostic_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-store-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-store-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-store-test-profile,lifecycle-test-fault", "--locked"),
+    )
+    ordinary_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--locked"),
+        ("cargo", "test", "-p", "lumin-cli", "--test", "audit_store_diagnostic",
+         "--features", "audit-execution-profile-probe", "--locked"),
+        ("cargo", "run", "--locked", "-p", "lumin-xtask", "--", "benchmark",
+         "foundation", "--diagnose-cold-audit-store"),
+    )
+
+    def invoke(self, fixture, command, target, **kwargs):
+        # The shared test cases supply the W2 target spelling; this partition
+        # maps only that exact leaf to its separately authored W3 leaf.
+        if target is not None and target.name == "lumin-audit-diagnostic-target":
+            target = target.with_name("lumin-audit-store-diagnostic-target")
+        return super().invoke(fixture, command, target, **kwargs)
+
+    def test_redirected_hosted_targets_fail_before_cargo(self):
+        for command, name in (
+            (self.ordinary_commands[0], "lumin-target"),
+            (self.diagnostic_commands[0], "lumin-audit-store-diagnostic-target"),
+        ):
+            with self.subTest(target=name), Fixture() as fixture:
+                target = fixture.base / "runner" / name
+                target.parent.mkdir()
+                destination = fixture.base / "redirected-target"
+                destination.mkdir()
+                if os.name == "nt":
+                    subprocess.run(("cmd", "/c", "mklink", "/J", str(target), str(destination)),
+                                   shell=False, check=True, capture_output=True)
+                else:
+                    target.symlink_to(destination, target_is_directory=True)
+                status, errors, metadata, launch = self.invoke(fixture, command, target)
+                self.assertEqual(status, 2)
+                self.assertIn("GitHub Cargo target is redirected", errors)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+    def test_w2_w3_and_control_targets_cannot_cross(self):
+        cases = [
+            (command, "lumin-audit-store-diagnostic-target")
+            for command in HostedTargetTests.diagnostic_commands + self.ordinary_commands
+        ] + [
+            (command, "lumin-audit-diagnostic-target") for command in self.diagnostic_commands
+        ] + [
+            ((*self.diagnostic_commands[0], "--features", "lifecycle-test-fault"),
+             "lumin-audit-store-diagnostic-target"),
+        ]
+        for command, name in cases:
+            with self.subTest(command=command, target=name), Fixture() as fixture:
+                status, _, metadata, launch = super().invoke(fixture, command, fixture.base / "runner" / name)
+                self.assertEqual(status, 2)
+                metadata.assert_not_called()
+                launch.assert_not_called()
+
+
+class HostedLifecycleTargetTests(unittest.TestCase):
+    target_name = "lumin-audit-lifecycle-diagnostic-target"
+    kind = "lifecycle"
+    # Independent W7 design oracle; never copied from the guard's allowlist.
+    diagnostic_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-lifecycle-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-lifecycle-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-lifecycle-test-profile,lifecycle-test-fault", "--locked"),
+    )
+    invoke = HostedTargetTests.invoke
+
+    def test_audit_lifecycle_exact_vectors_reach_cargo_and_keep_its_failure(self):
+        for index, command in enumerate(self.diagnostic_commands):
+            with self.subTest(command=command), Fixture() as fixture:
+                returncode = 101 if index == 2 else 0
+                status, errors, metadata, launch = self.invoke(
+                    fixture, command, fixture.base / "runner" / self.target_name,
+                    returncode=returncode,
+                )
+                self.assertEqual((status, errors), (returncode, ""))
+                self.assertTrue(metadata.called)
+                self.assertTrue(launch.called)
+
+    def test_audit_lifecycle_all_exact_target_crossovers_are_rejected(self):
+        lanes = (
+            (HostedTargetTests.diagnostic_commands, "lumin-audit-diagnostic-target"),
+            (HostedStoreTargetTests.diagnostic_commands, "lumin-audit-store-diagnostic-target"),
+            (HostedLifecycleTargetTests.diagnostic_commands, "lumin-audit-lifecycle-diagnostic-target"),
+            (HostedBoundaryTargetTests.diagnostic_commands, "lumin-audit-boundary-diagnostic-target"),
+            (HostedTargetTests.ordinary_commands, "lumin-target"),
+        )
+        for commands, expected in lanes:
+            for command in commands:
+                for _, target in lanes:
+                    if target == expected:
+                        continue
+                    with self.subTest(command=command, target=target), Fixture() as fixture:
+                        status, _, metadata, launch = self.invoke(fixture, command, fixture.base / "runner" / target)
+                        self.assertEqual(status, 2)
+                        metadata.assert_not_called()
+                        launch.assert_not_called()
+
+    def test_audit_unlisted_instrumentation_cannot_fall_through_to_any_target(self):
+        for feature in ("audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile", "audit-boundary-test-profile"):
+            selectors = (
+                ("--features", feature), ("--features=" + feature,), ("-F", feature), ("-F" + feature,),
+                ("-F=" + feature,), ("-F=lumin-cli/" + feature,),
+                ("--features", "lumin-cli/" + feature), ("--features", "other," + feature),
+                ("--features", "other " + feature), ("--features", "other", "--features", feature),
+                ("--features", feature, "--features", "audit-execution-test-profile"), ("--all-features",),
+            )
+            for selector in selectors:
+                command = ("cargo", "build", "-p", "lumin-cli", *selector, "--release", "--locked")
+                for target in ("lumin-target", "lumin-audit-diagnostic-target", "lumin-audit-store-diagnostic-target", "lumin-audit-lifecycle-diagnostic-target", "lumin-audit-boundary-diagnostic-target"):
+                    with self.subTest(command=command, target=target), Fixture() as fixture:
+                        status, errors, metadata, launch = self.invoke(fixture, command, fixture.base / "runner" / target)
+                        self.assertEqual(status, 2)
+                        self.assertIn("unlisted diagnostic selectors", errors)
+                        metadata.assert_not_called()
+                        launch.assert_not_called()
+
+    def test_audit_lifecycle_control_decoder_and_probe_commands_remain_admitted(self):
+        commands = (
+            ("cargo", "run", "--locked", "-p", "lumin-xtask", "--", "benchmark", "foundation", f"--diagnose-cold-audit-{self.kind}"),
+            ("cargo", "test", "-p", "lumin-cli", "--test", f"audit_{self.kind}_diagnostic", "--features", "audit-execution-profile-probe", "--locked"),
+            ("cargo", "test", "--locked", "--", "audit-lifecycle-test-profile"),
+            ("cargo", "metadata", "--all-features", "--locked"),
+        )
+        for command in commands:
+            with self.subTest(command=command), Fixture() as fixture:
+                status, errors, _, launch = self.invoke(fixture, command, fixture.base / "runner/lumin-target")
+                self.assertEqual((status, errors), (0, ""))
+                self.assertTrue(launch.called)
+
+    def test_audit_lifecycle_redirected_target_is_rejected_before_metadata(self):
+        with Fixture() as fixture:
+            target = fixture.base / "runner" / self.target_name
+            target.parent.mkdir()
+            destination = fixture.base / "foreign-target"
+            destination.mkdir()
+            if os.name == "nt":
+                subprocess.run(("cmd", "/c", "mklink", "/J", str(target), str(destination)), shell=False, check=True, capture_output=True)
+            else:
+                target.symlink_to(destination, target_is_directory=True)
+            status, _, metadata, launch = self.invoke(fixture, self.diagnostic_commands[0], target)
+            self.assertEqual(status, 2)
+            metadata.assert_not_called()
+            launch.assert_not_called()
+
+
+class HostedBoundaryTargetTests(HostedLifecycleTargetTests):
+    # Independent W9 source/target oracle; the negative matrix is shared, not skipped.
+    target_name = "lumin-audit-boundary-diagnostic-target"
+    kind = "boundary"
+    diagnostic_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-boundary-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-boundary-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-boundary-test-profile,lifecycle-test-fault", "--locked"),
+    )
+
+
 class DependencySurfaceTests(unittest.TestCase):
     def test_policy_is_small_direct_and_includes_the_development_tool(self) -> None:
         with Fixture() as fixture:
@@ -481,6 +814,22 @@ class DependencySurfaceTests(unittest.TestCase):
                 PROVENANCE.validate_filtered_lane(
                     changed, metadata, repository, "x86_64-unknown-linux-gnu"
                 )
+
+    def test_target_predicates_are_an_exact_frozen_set(self) -> None:
+        musl_allocator = 'cfg(all(target_os = "linux", target_env = "musl"))'
+        self.assertTrue(
+            PROVENANCE._target_applies(musl_allocator, "x86_64-unknown-linux-musl")
+        )
+        self.assertFalse(
+            PROVENANCE._target_applies(musl_allocator, "x86_64-unknown-linux-gnu")
+        )
+        self.assertFalse(
+            PROVENANCE._target_applies(musl_allocator, "x86_64-pc-windows-msvc")
+        )
+        with self.assertRaises(PROVENANCE.ProvenanceError):
+            PROVENANCE._target_applies(
+                'cfg(target_env = "musl")', "x86_64-unknown-linux-musl"
+            )
 
     def test_registry_manifest_must_be_loaded_from_the_active_cargo_home(self) -> None:
         with Fixture() as fixture:

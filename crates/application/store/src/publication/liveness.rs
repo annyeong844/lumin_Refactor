@@ -1,7 +1,10 @@
 mod records;
 mod recovery;
+#[cfg(test)]
+mod tests;
 
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fs2::FileExt;
 use lumin_model::{AttemptId, AttemptStatus};
@@ -17,57 +20,114 @@ pub struct AttemptSession<'store> {
     lease: AttemptLeaseRecord,
     generation: StoreGeneration,
     lock_file: Option<namespace::HeldEntry>,
+    rejected_backend_access: AtomicBool,
 }
 
-pub(super) fn begin(store: &RepositoryStore) -> Result<AttemptSession<'_>, StoreError> {
-    store.with_exclusive_lock(|guard| {
-        latest::ensure(store, guard)?;
-        recovery::recover_under_guard(store, guard)?;
+pub(super) fn begin<'store>(
+    store: &'store RepositoryStore,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
+) -> Result<AttemptSession<'store>, StoreError> {
+    store_profile_lock!(
+        store,
+        with_exclusive_lock,
+        true,
+        false,
+        profile,
+        AttemptEnter,
+        AttemptExit,
+        |guard| {
+            store_phase_begin!(profile, AttemptRecoverLatest);
+            lifecycle_context!(profile, AttemptRecoverLatest, |lifecycle| {
+                latest::ensure_profiled(
+                    store,
+                    guard,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
+            store_phase_end!(profile, AttemptRecoverLatest);
+            store_phase_begin!(profile, AttemptRecoverLeases);
+            recovery::recover_under_guard(store, guard)?;
+            store_phase_end!(profile, AttemptRecoverLeases);
 
-        let lease_nonce = nonce_hex()?;
-        let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
-        hit_before_allocation();
-        let allocation =
-            records::reserve(guard, lock_name.clone(), lease_nonce, std::process::id())?;
-        let lock_file = guard.create_state_file(&lock_name, "attempt process-liveness lock")?;
-        lock_file.file().try_lock_exclusive().map_err(io_error)?;
-        hit_after_lock_creation();
-        let lease = records::activate(guard, &lock_file, &allocation)?;
-        hit_after_allocation();
+            let lease_nonce = nonce_hex()?;
+            let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
+            hit_before_allocation();
+            store_phase_begin!(profile, AttemptReserve);
+            let allocation =
+                records::reserve(guard, lock_name.clone(), lease_nonce, std::process::id())?;
+            store_phase_end!(profile, AttemptReserve);
+            store_phase_begin!(profile, AttemptLock);
+            let lock_file = guard.create_state_file(&lock_name, "attempt process-liveness lock")?;
+            lock_file.file().try_lock_exclusive().map_err(io_error)?;
+            store_phase_end!(profile, AttemptLock);
+            hit_after_lock_creation();
+            store_phase_begin!(profile, AttemptActivate);
+            let lease = records::activate(guard, &lock_file, &allocation)?;
+            store_phase_end!(profile, AttemptActivate);
+            hit_after_allocation();
 
-        create_attempt_directory(store, guard, &lease.attempt_id, lease.generation)?;
-        let envelope = AttemptEnvelope {
-            schema_version: "lumin-attempt.v1".to_owned(),
-            attempt_id: lease.attempt_id.clone(),
-            sequence: lease.sequence,
-            state: AttemptStatus::Running,
-            started_unix_millis: unix_millis()?,
-            finished_unix_millis: None,
-            run_id: None,
-            failure: None,
-        };
-        let directory = guard.open_managed_child_directory(
-            ManagedStateParentKind::Attempts,
-            lease.attempt_id.as_str(),
-            "attempt directory",
-        )?;
-        files::write_json(
-            &attempt_path(store, &lease.attempt_id),
-            &directory,
-            "attempt envelope",
-            &envelope,
-        )?;
-        hit_after_running();
+            store_phase_begin!(profile, AttemptDirectory);
+            lifecycle_context!(profile, AttemptDirectory, |lifecycle| {
+                create_attempt_directory(
+                    store,
+                    guard,
+                    &lease.attempt_id,
+                    lease.generation,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
+            store_phase_end!(profile, AttemptDirectory);
+            let envelope = AttemptEnvelope {
+                schema_version: "lumin-attempt.v1".to_owned(),
+                attempt_id: lease.attempt_id.clone(),
+                sequence: lease.sequence,
+                state: AttemptStatus::Running,
+                started_unix_millis: unix_millis()?,
+                finished_unix_millis: None,
+                run_id: None,
+                failure: None,
+            };
+            store_phase_begin!(profile, AttemptEnvelope);
+            let directory = guard.open_managed_child_directory(
+                ManagedStateParentKind::Attempts,
+                lease.attempt_id.as_str(),
+                "attempt directory",
+            )?;
+            files::write_json(
+                &attempt_path(store, &lease.attempt_id),
+                &directory,
+                "attempt envelope",
+                &envelope,
+            )?;
+            hit_after_running();
+            store_phase_end!(profile, AttemptEnvelope);
 
-        latest::publish_attempt(store, guard, &envelope, false)?;
-        hit_after_latest_running();
-        Ok(AttemptSession {
-            store,
-            generation: lease.generation,
-            lease,
-            lock_file: Some(lock_file),
-        })
-    })
+            store_phase_begin!(profile, AttemptLatest);
+            lifecycle_context!(profile, AttemptLatest, |lifecycle| {
+                latest::publish_attempt_profiled(
+                    store,
+                    guard,
+                    &envelope,
+                    false,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
+            store_phase_end!(profile, AttemptLatest);
+            hit_after_latest_running();
+            Ok(AttemptSession {
+                store,
+                generation: lease.generation,
+                lease,
+                lock_file: Some(lock_file),
+                rejected_backend_access: AtomicBool::new(false),
+            })
+        }
+    )
 }
 
 pub(super) fn finish_failed(
@@ -85,6 +145,7 @@ pub(super) fn finish_failed(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
+    session.require_backend_access()?;
     store.with_exclusive_lock(|guard| {
         session.validate(guard)?;
         let mut envelope = latest::read_attempt(store, guard, &session.lease.attempt_id)?;
@@ -98,11 +159,37 @@ pub(super) fn finish_failed(
     })
 }
 
-pub(super) fn recover(store: &RepositoryStore) -> Result<(), StoreError> {
-    store.with_exclusive_lock(|guard| {
-        latest::ensure(store, guard)?;
-        recovery::recover_under_guard(store, guard)
-    })
+pub(super) fn recover(
+    store: &RepositoryStore,
+    #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+        &mut crate::audit_profile::StoreProfiler,
+    >,
+) -> Result<(), StoreError> {
+    store_profile_lock!(
+        store,
+        with_admission_exclusive_lock,
+        true,
+        true,
+        profile,
+        OpenRecoveryEnter,
+        OpenRecoveryExit,
+        |guard| {
+            store_phase_begin!(profile, OpenRecoveryLatest);
+            lifecycle_context!(profile, OpenRecoveryLatest, |lifecycle| {
+                latest::ensure_profiled(
+                    store,
+                    guard,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    lifecycle,
+                )
+            })?;
+            store_phase_end!(profile, OpenRecoveryLatest);
+            store_phase_begin!(profile, OpenRecoveryLeases);
+            let result = recovery::recover_under_guard(store, guard);
+            store_phase_end!(profile, OpenRecoveryLeases);
+            result
+        }
+    )
 }
 
 pub(super) fn validate_snapshot(
@@ -195,11 +282,21 @@ pub(super) fn validate_snapshot_locks(
     records::validate_snapshot_locks(rows, guard)
 }
 
-pub(super) fn has_active_lease(
+pub(super) fn has_active_lease_profiled(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<bool, StoreError> {
-    let Some(lease) = records::read(guard, attempt_id)? else {
+    let lease = records::read_profiled(
+        guard,
+        attempt_id,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    );
+    lifecycle_end!(profile, DatabaseReturnTail);
+    let Some(lease) = lease? else {
         return Ok(false);
     };
     if lease.state == AttemptLeaseState::Allocating {
@@ -228,20 +325,37 @@ impl AttemptSession<'_> {
     }
 
     pub(super) fn validate(&self, guard: &NamespaceGuard) -> Result<(), StoreError> {
+        self.validate_profiled(
+            guard,
+            #[cfg(feature = "audit-boundary-test-profile")]
+            None,
+        )
+    }
+    fn validate_profiled(
+        &self,
+        guard: &NamespaceGuard,
+        #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        self.require_backend_access()?;
         if self.lease.state != AttemptLeaseState::Active {
             return Err(StoreError::Integrity(format!(
                 "attempt session is no longer active: {}",
                 self.lease.attempt_id.as_str()
             )));
         }
-        let database = guard.open_database_for_generation(self.generation)?;
-        drop(database);
-        let persisted = records::read(guard, &self.lease.attempt_id)?.ok_or_else(|| {
-            StoreError::Integrity(format!(
-                "attempt process-liveness lease is missing: {}",
-                self.lease.attempt_id.as_str()
-            ))
-        })?;
+        let persisted = records::read_session_profiled(
+            guard,
+            self.generation,
+            &self.lease.attempt_id,
+            #[cfg(feature = "audit-boundary-test-profile")]
+            profile.as_deref_mut(),
+        );
+        if guard.require_backend_access().is_err() {
+            self.rejected_backend_access.store(true, Ordering::Release);
+        }
+        let persisted = persisted?;
         if persisted != self.lease {
             return Err(StoreError::Integrity(format!(
                 "attempt process-liveness lease changed: {}",
@@ -254,7 +368,21 @@ impl AttemptSession<'_> {
                 self.lease.attempt_id.as_str()
             ))
         })?;
-        records::validate_lock(guard, lock_file, &self.lease)
+        boundary_cost!(
+            profile,
+            AttemptLockValidation,
+            records::validate_lock(guard, lock_file, &self.lease)
+        )
+    }
+
+    pub(super) fn require_backend_access(&self) -> Result<(), StoreError> {
+        if self.rejected_backend_access.load(Ordering::Acquire) {
+            return Err(StoreError::Integrity(format!(
+                "attempt session rejected lifecycle backend access: {}",
+                self.lease.attempt_id.as_str()
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -263,9 +391,45 @@ pub(super) fn release_session(
     guard: &NamespaceGuard,
     session: &mut AttemptSession<'_>,
 ) -> Result<(), StoreError> {
-    session.validate(guard)?;
-    session.lease = records::mark_releasing(guard, &session.lease)?;
-    recovery::finish_releasing(store, guard, &session.lease, session.lock_file.take())
+    release_session_profiled(
+        store,
+        guard,
+        session,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+    )
+}
+pub(super) fn release_session_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    session: &mut AttemptSession<'_>,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+) -> Result<(), StoreError> {
+    session.validate_profiled(
+        guard,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    let releasing = records::mark_releasing_profiled(
+        guard,
+        &session.lease,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile.as_deref_mut(),
+    );
+    if releasing.is_ok() {
+        boundary_end!(profile, DatabaseReturnTail);
+    }
+    session.lease = releasing?;
+    recovery::finish_releasing_profiled(
+        store,
+        guard,
+        &session.lease,
+        session.lock_file.take(),
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile,
+    )
 }
 
 fn require_running(
@@ -290,20 +454,48 @@ pub(super) fn write_terminal(
     generation: StoreGeneration,
     envelope: &AttemptEnvelope,
 ) -> Result<(), StoreError> {
+    write_terminal_profiled(
+        store,
+        guard,
+        generation,
+        envelope,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn write_terminal_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    generation: StoreGeneration,
+    envelope: &AttemptEnvelope,
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
     latest::validate_attempt_envelope(envelope)?;
     let directory = guard.open_managed_child_directory(
         ManagedStateParentKind::Attempts,
         envelope.attempt_id.as_str(),
         "attempt directory",
     )?;
-    guard.mutate_for_generation(generation, || {
-        files::write_json(
-            &attempt_path(store, &envelope.attempt_id),
-            &directory,
-            "attempt envelope",
-            envelope,
-        )
-    })
+    guard.mutate_for_generation_profiled(
+        generation,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+        |#[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| {
+            files::write_json_profiled(
+                &attempt_path(store, &envelope.attempt_id),
+                &directory,
+                "attempt envelope",
+                envelope,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile,
+            )
+        },
+    )
 }
 
 fn create_attempt_directory(
@@ -311,6 +503,9 @@ fn create_attempt_directory(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
     generation: StoreGeneration,
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<(), StoreError> {
     let path = attempt_directory(store, attempt_id);
     if entry_exists(&path)? {
@@ -320,10 +515,17 @@ fn create_attempt_directory(
         )));
     }
     let parent = guard.managed_parent_entry(ManagedStateParentKind::Attempts)?;
-    guard.mutate_for_generation(generation, || {
-        fs::create_dir(&path).map_err(io_error)?;
-        parent.sync_directory()
-    })
+    guard.mutate_for_generation_profiled(
+        generation,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+        |#[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| {
+            fs::create_dir(&path).map_err(io_error)?;
+            lifecycle_cost!(profile, DirectorySync, parent.sync_directory())
+        },
+    )
 }
 
 fn hit_before_allocation() {

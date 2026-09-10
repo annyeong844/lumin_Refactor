@@ -2,7 +2,7 @@
 
 Status: Phase 1 foundation implementation active
 
-Revision: 2026-08-24
+Revision: 2026-09-05
 
 ## One-Line Purpose
 
@@ -24,6 +24,7 @@ AI agents grounded, queryable evidence before and after they change code.
 | REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
 | REVIEW-003 | frozen | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Owns the proportional workspace dependency policy, isolated Cargo admission, and loaded-source boundary. |
 | REVIEW-004 | frozen | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | Owns the cache-cleanup delivery, required store-migration route, and active-cache reservation amendment. |
+| REVIEW-005 | review candidate; not frozen | `reviews/phase1-performance-evidence-review-2026-09-05.md` | Routes the remaining performance observability, Linux-musl allocator review, and WSL `/mnt` diagnostic decision. |
 
 ## Active Work
 

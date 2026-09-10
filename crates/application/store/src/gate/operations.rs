@@ -42,9 +42,9 @@ impl OperationSession<'_> {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
             reject_retention_operation_collision(&write, operation_id)?;
-            super::integrity::validate_stored_gate_catalog(&write)?;
+            let mut catalog = super::integrity::validate_stored_gate_catalog(&write)?;
             let mut operation = if let Some(mut operation) =
-                read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
+                catalog.operations.remove(operation_id.as_str())
             {
                 validate_operation(
                     &operation,
@@ -52,7 +52,6 @@ impl OperationSession<'_> {
                     request_digest,
                     None,
                 )?;
-                validate_stored_validation_receipt(&write, &operation)?;
                 if let Some(result) = operation.result {
                     return Ok(PreWriteStart::Committed(Box::new(result)));
                 }
@@ -113,7 +112,7 @@ impl OperationSession<'_> {
             let transition_sequence = operation.transition_sequence;
             let catalog_revision = current_active_gate_catalog(&write)?;
             let admission_evidence = pre_write_admission_evidence(
-                &write,
+                &catalog,
                 operation_id,
                 &operation.leased_write_set,
                 catalog_revision,
@@ -191,8 +190,10 @@ impl OperationSession<'_> {
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
+            let mut catalog = super::integrity::validate_stored_gate_catalog(&write)?;
             let mut operation = load_operation_for_finish(
                 &write,
+                &mut catalog,
                 operation_id,
                 GateOperationKind::PreWrite,
                 request_digest,
@@ -203,9 +204,9 @@ impl OperationSession<'_> {
                 return Ok(result);
             }
             self.validate_pending_operation(&operation)?;
-            super::integrity::validate_stored_gate_catalog(&write)?;
             validate_pre_write_context(
                 &write,
+                &catalog,
                 &operation,
                 baseline.as_ref(),
                 &leased_write_set,
@@ -304,33 +305,33 @@ impl OperationSession<'_> {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
             reject_retention_operation_collision(&write, operation_id)?;
-            if let Some(mut operation) =
-                read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
-            {
+            let mut catalog = super::integrity::validate_stored_gate_catalog(&write)?;
+            if let Some(mut operation) = catalog.operations.remove(operation_id.as_str()) {
                 validate_operation(
                     &operation,
                     GateOperationKind::PostWrite,
                     request_digest,
                     Some(gate_id),
                 )?;
-                validate_stored_validation_receipt(&write, &operation)?;
                 if let Some(result) = operation.result {
                     return Ok(PostWriteStart::Committed(Box::new(result)));
                 }
                 if operation.status == GateOperationStatus::Pending {
                     self.validate_pending_operation(&operation)?;
-                    let gate = read_validated_gate(&write, gate_id)?
-                        .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
-                    let (transitions, active_gates) =
-                        post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
+                    let gate = load_active_gate_for_post_write(&mut catalog, gate_id, &operation)?;
+                    let (transitions, active_gates) = post_write_analysis_context(
+                        &catalog,
+                        &gate,
+                        operation.transition_sequence,
+                    )?;
                     return Ok(PostWriteStart::Analyze {
                         gate: Box::new(gate),
                         transitions,
                         active_gates,
                     });
                 }
-                let gate = load_active_gate_for_retry(&write, gate_id)?;
-                ensure_post_write_revision_available(&write, operation_id, &gate)?;
+                let gate = load_active_gate_for_retry(&mut catalog, gate_id)?;
+                ensure_post_write_revision_available_in_catalog(&catalog, operation_id, &gate)?;
                 operation.target_revision = gate.current_revision;
                 operation.transition_sequence = current_transition_sequence(&write)?;
                 operation.leased_write_set = gate.leased_write_set.clone();
@@ -339,7 +340,7 @@ impl OperationSession<'_> {
                 operation.post_write_final_validation = None;
                 self.bind_pending_operation(&mut operation)?;
                 let (transitions, active_gates) =
-                    post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
+                    post_write_analysis_context(&catalog, &gate, operation.transition_sequence)?;
                 persist_validation_receipt(&write, &operation, None)?;
                 write_record(
                     &write,
@@ -355,8 +356,8 @@ impl OperationSession<'_> {
                 });
             }
 
-            let gate = load_active_gate_for_retry(&write, gate_id)?;
-            ensure_post_write_revision_available(&write, operation_id, &gate)?;
+            let gate = load_active_gate_for_retry(&mut catalog, gate_id)?;
+            ensure_post_write_revision_available_in_catalog(&catalog, operation_id, &gate)?;
             let mut operation = OperationRecord {
                 schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
                 operation_id: operation_id.clone(),
@@ -382,7 +383,7 @@ impl OperationSession<'_> {
             };
             self.bind_pending_operation(&mut operation)?;
             let (transitions, active_gates) =
-                post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
+                post_write_analysis_context(&catalog, &gate, operation.transition_sequence)?;
             persist_validation_receipt(&write, &operation, None)?;
             write_record(
                 &write,
@@ -458,8 +459,10 @@ impl OperationSession<'_> {
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
+            let mut catalog = super::integrity::validate_stored_gate_catalog(&write)?;
             let mut operation = load_operation_for_finish(
                 &write,
+                &mut catalog,
                 operation_id,
                 kind,
                 request_digest,
@@ -470,15 +473,14 @@ impl OperationSession<'_> {
                 return Ok(SemanticReadReservation::Committed(Box::new(result)));
             }
             self.validate_pending_operation(&operation)?;
-            super::integrity::validate_stored_gate_catalog(&write)?;
             if kind == GateOperationKind::PostWrite {
-                load_active_gate_for_post_write(&write, gate_id, &operation)?;
+                load_active_gate_for_post_write(&mut catalog, gate_id, &operation)?;
             }
             if current_transition_sequence(&write)? != operation.transition_sequence {
                 return Ok(SemanticReadReservation::TransitionCatalogChanged);
             }
             let conflicts =
-                semantic_read_conflicts(&write, operation_id, gate_id, &demanded_inputs)?;
+                semantic_read_conflicts(&catalog, operation_id, gate_id, &demanded_inputs)?;
             if !conflicts.paths.is_empty() {
                 return Ok(SemanticReadReservation::Conflict {
                     paths: conflicts.paths,
@@ -546,8 +548,10 @@ impl OperationSession<'_> {
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
+            let mut catalog = super::integrity::validate_stored_gate_catalog(&write)?;
             let mut operation = load_operation_for_finish(
                 &write,
+                &mut catalog,
                 operation_id,
                 GateOperationKind::PostWrite,
                 request_digest,
@@ -558,8 +562,7 @@ impl OperationSession<'_> {
                 return Ok(result);
             }
             self.validate_pending_operation(&operation)?;
-            super::integrity::validate_stored_gate_catalog(&write)?;
-            let mut gate = load_active_gate_for_post_write(&write, gate_id, &operation)?;
+            let mut gate = load_active_gate_for_post_write(&mut catalog, gate_id, &operation)?;
             if let Some(snapshot) = snapshot.as_ref() {
                 validate_captured_reservations(
                     &operation,
@@ -569,6 +572,7 @@ impl OperationSession<'_> {
             }
             validate_post_write_context(
                 &write,
+                &catalog,
                 &gate,
                 &operation,
                 &changed_paths,
@@ -642,6 +646,7 @@ impl OperationSession<'_> {
                 }
                 publish_authorized_transition(
                     &write,
+                    &mut catalog.gates,
                     &mut gate,
                     AuthorizedTransitionInput {
                         revision,

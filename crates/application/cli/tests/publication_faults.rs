@@ -71,8 +71,51 @@ fn terminal_crashes_recover_the_completed_run_and_monotonic_pointers()
     ] {
         let fixture = Fixture::new()?;
         fixture.crash(point)?;
+        let expected_recovery = if point == "after-latest-replace" {
+            let bytes =
+                lumin_engine::complete_logical_store_observation_for_test(fixture.root.path())?;
+            let mut expected: Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(
+                expected["records"]["pointers"],
+                serde_json::json!({
+                    "latest-attempt": b"attempt_0000000000000002".to_vec(),
+                    "latest-completed": fixture.baseline_run.as_bytes().to_vec(),
+                })
+            );
+            expected["records"]["pointers"]["latest-completed"] =
+                serde_json::json!(b"run_0000000000000002".to_vec());
+            let leases = expected["records"]["attempt_leases"]
+                .as_object_mut()
+                .ok_or_else(|| std::io::Error::other("missing attempt lease inventory"))?;
+            assert_eq!(leases.len(), 1);
+            assert!(leases.remove("attempt_0000000000000002").is_some());
+            Some((
+                expected,
+                fs::read(fixture.root.path().join(".lumin/latest.json"))?,
+            ))
+        } else {
+            None
+        };
         fixture.assert_overview(2, "completed", "run_0000000000000002")?;
         fixture.assert_catalogued_runs(&["run_0000000000000002", fixture.baseline_run.as_str()])?;
+        if let Some((expected, latest_bytes)) = expected_recovery {
+            let recovered =
+                lumin_engine::complete_logical_store_observation_for_test(fixture.root.path())?;
+            assert_eq!(serde_json::from_slice::<Value>(&recovered)?, expected);
+            let first = run(fixture.root.path(), &["overview"])?;
+            let retry = run(fixture.root.path(), &["overview"])?;
+            assert_status(&first, 0);
+            assert_status(&retry, 0);
+            assert_eq!(retry.stdout, first.stdout);
+            assert_eq!(
+                lumin_engine::complete_logical_store_observation_for_test(fixture.root.path())?,
+                recovered
+            );
+            assert_eq!(
+                fs::read(fixture.root.path().join(".lumin/latest.json"))?,
+                latest_bytes
+            );
+        }
     }
     Ok(())
 }

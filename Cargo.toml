@@ -28,6 +28,7 @@ base64 = "=0.22.1"
 fs2 = "=0.4.3"
 getrandom = "=0.4.3"
 ignore = "=0.4.26"
+mimalloc = { version = "=0.1.52", features = ["v2"] }
 oxc_allocator = "=0.126.0"
 oxc_ast = "=0.126.0"
 oxc_ast_visit = "=0.126.0"

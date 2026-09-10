@@ -54,7 +54,26 @@ pub struct LatestRunSnapshot {
 
 impl RepositoryStore {
     pub fn begin_attempt(&self) -> Result<AttemptSession<'_>, StoreError> {
-        liveness::begin(self)
+        liveness::begin(
+            self,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    #[cfg(feature = "audit-store-test-profile")]
+    pub fn begin_attempt_observed(
+        &self,
+    ) -> (
+        Result<AttemptSession<'_>, StoreError>,
+        lumin_model::audit_store_diagnostic::AuditStoreTimings,
+    ) {
+        use lumin_model::audit_store_diagnostic::AuditStorePhase;
+        let mut recorder = crate::audit_profile::StoreProfiler::new(AuditStorePhase::AttemptBegin);
+        recorder.begin(AuditStorePhase::AttemptBegin);
+        let result = liveness::begin(self, Some(&mut recorder));
+        recorder.end(AuditStorePhase::AttemptBegin);
+        (result, recorder.finish())
     }
 
     pub fn fail_attempt(
@@ -73,15 +92,68 @@ impl RepositoryStore {
             &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
         ) -> Result<(), StoreError>,
     ) -> Result<crate::PublishedRun, StoreError> {
-        run::publish(self, attempt, evidence, final_validation)
+        run::publish(
+            self,
+            attempt,
+            |reserved_identities| {
+                final_validation(reserved_identities)?;
+                crate::prepare_run_evidence(evidence)
+            },
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    pub fn publish_run_with_preflight(
+        &self,
+        attempt: &mut AttemptSession<'_>,
+        preflight: impl FnOnce(
+            &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+        ) -> Result<crate::PreparedRunEvidence, StoreError>,
+    ) -> Result<crate::PublishedRun, StoreError> {
+        run::publish(
+            self,
+            attempt,
+            preflight,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+        )
+    }
+
+    #[cfg(feature = "audit-store-test-profile")]
+    pub fn publish_run_observed(
+        &self,
+        attempt: &mut AttemptSession<'_>,
+        preflight: impl FnOnce(
+            &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+        ) -> Result<crate::PreparedRunEvidence, StoreError>,
+    ) -> (
+        Result<crate::PublishedRun, StoreError>,
+        lumin_model::audit_store_diagnostic::AuditStoreTimings,
+    ) {
+        use lumin_model::audit_store_diagnostic::AuditStorePhase;
+        let mut recorder = crate::audit_profile::StoreProfiler::new(AuditStorePhase::StorePublish);
+        recorder.begin(AuditStorePhase::StorePublish);
+        let result = run::publish(self, attempt, preflight, Some(&mut recorder));
+        recorder.end(AuditStorePhase::StorePublish);
+        (result, recorder.finish())
     }
 
     pub fn latest_snapshot(&self) -> Result<LatestRunSnapshot, StoreError> {
         latest::snapshot(self)
     }
 
-    pub(super) fn recover_publication(&self) -> Result<(), StoreError> {
-        liveness::recover(self)
+    pub(super) fn recover_publication(
+        &self,
+        #[cfg(feature = "audit-store-test-profile")] profile: Option<
+            &mut crate::audit_profile::StoreProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        liveness::recover(
+            self,
+            #[cfg(feature = "audit-store-test-profile")]
+            profile,
+        )
     }
 }
 

@@ -10,8 +10,6 @@ use rayon::prelude::*;
 
 use crate::EngineError;
 
-const WORKER_STACK_BYTES: usize = 4_194_304;
-
 pub(super) struct ExtractionOutput {
     pub(super) facts: Vec<FileFacts>,
     pub(super) inventory_bound_uses: Vec<InventoryBoundSourceUse>,
@@ -23,109 +21,100 @@ pub(super) fn extract_facts(
     sources: &[SourceSnapshot],
     config: &SemanticConfigSnapshot,
     selected_profiles: &[SelectedResolutionProfile],
-    jobs: usize,
 ) -> Result<ExtractionOutput, EngineError> {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .stack_size(WORKER_STACK_BYTES)
-        .thread_name(|index| format!("lumin-worker-{index}"))
-        .build()
-        .map_err(|error| EngineError::Scheduler(error.to_string()))?;
     let source_index = lumin_sfc::source_index(sources);
     let profiles = selected_profiles
         .iter()
         .map(|selected| (selected.source_id.clone(), selected.profile))
         .collect::<BTreeMap<_, _>>();
-    pool.install(|| {
-        let (physical_facts, physical_parse_product_count) =
-            extract_physical_js(sources, config, &profiles)?;
+    let (physical_facts, physical_parse_product_count) =
+        extract_physical_js(sources, config, &profiles)?;
 
-        let mut decompositions = sources
-            .par_iter()
-            .filter(|source| !source.kind.is_js_family())
-            .map(|source| {
-                lumin_sfc::decompose(source, &source_index).map(|decomposition| {
-                    (
-                        decomposition,
-                        source_module_format(source, config, &profiles),
-                    )
-                })
+    let mut decompositions = sources
+        .par_iter()
+        .filter(|source| !source.kind.is_js_family())
+        .map(|source| {
+            lumin_sfc::decompose(source, &source_index).map(|decomposition| {
+                (
+                    decomposition,
+                    source_module_format(source, config, &profiles),
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        decompositions.sort_by(|left, right| left.0.source_id.cmp(&right.0.source_id));
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    decompositions.sort_by(|left, right| left.0.source_id.cmp(&right.0.source_id));
 
-        let embedded_parse_product_count = decompositions
-            .iter()
-            .map(|(decomposition, _module_format)| decomposition.inline_scripts.len())
-            .sum::<usize>();
-        let mut embedded_by_parent = BTreeMap::<_, Vec<FileFacts>>::new();
-        let mut embedded = decompositions
-            .par_iter()
-            .flat_map_iter(|(decomposition, module_format)| {
-                decomposition
-                    .inline_scripts
-                    .iter()
-                    .map(move |unit| (&decomposition.source_id, unit, *module_format))
-            })
-            .map(|(parent, unit, module_format)| {
-                lumin_js::extract_embedded_with_module_format(unit, module_format)
-                    .map(|facts| (parent.clone(), facts))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        embedded.sort_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.1.source_unit.cmp(&right.1.source_unit))
-        });
-        for (parent, facts) in embedded {
-            embedded_by_parent.entry(parent).or_default().push(facts);
-        }
+    let embedded_parse_product_count = decompositions
+        .iter()
+        .map(|(decomposition, _module_format)| decomposition.inline_scripts.len())
+        .sum::<usize>();
+    let mut embedded_by_parent = BTreeMap::<_, Vec<FileFacts>>::new();
+    let mut embedded = decompositions
+        .par_iter()
+        .flat_map_iter(|(decomposition, module_format)| {
+            decomposition
+                .inline_scripts
+                .iter()
+                .map(move |unit| (&decomposition.source_id, unit, *module_format))
+        })
+        .map(|(parent, unit, module_format)| {
+            lumin_js::extract_embedded_with_module_format(unit, module_format)
+                .map(|facts| (parent.clone(), facts))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    embedded.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.source_unit.cmp(&right.1.source_unit))
+    });
+    for (parent, facts) in embedded {
+        embedded_by_parent.entry(parent).or_default().push(facts);
+    }
 
-        let mut sfc_states = BTreeMap::new();
-        for (dialect, _id, initial_state) in lumin_sfc::compiled_dialect_states() {
-            sfc_states.insert(dialect, initial_state);
-        }
-        let mut sfc_facts = Vec::new();
-        let mut sfc_dialects_by_source = BTreeMap::<LogicalSourceId, BTreeSet<SfcDialect>>::new();
-        for (decomposition, _module_format) in decompositions {
-            let parent = decomposition.source_id.clone();
-            let analysis = lumin_sfc::finalize(
-                decomposition,
-                embedded_by_parent.remove(&parent).unwrap_or_default(),
-                &physical_facts,
-            )?;
-            sfc_states
-                .entry(analysis.dialect)
-                .and_modify(|state| *state = less_complete(*state, analysis.state))
-                .or_insert(analysis.state);
+    let mut sfc_states = BTreeMap::new();
+    for (dialect, _id, initial_state) in lumin_sfc::compiled_dialect_states() {
+        sfc_states.insert(dialect, initial_state);
+    }
+    let mut sfc_facts = Vec::new();
+    let mut sfc_dialects_by_source = BTreeMap::<LogicalSourceId, BTreeSet<SfcDialect>>::new();
+    for (decomposition, _module_format) in decompositions {
+        let parent = decomposition.source_id.clone();
+        let analysis = lumin_sfc::finalize(
+            decomposition,
+            embedded_by_parent.remove(&parent).unwrap_or_default(),
+            &physical_facts,
+        )?;
+        sfc_states
+            .entry(analysis.dialect)
+            .and_modify(|state| *state = less_complete(*state, analysis.state))
+            .or_insert(analysis.state);
+        sfc_dialects_by_source
+            .entry(analysis.source_id.clone())
+            .or_default()
+            .insert(analysis.dialect);
+        for attachment in &analysis.script_attachments {
             sfc_dialects_by_source
-                .entry(analysis.source_id.clone())
+                .entry(attachment.target_source_id.clone())
                 .or_default()
                 .insert(analysis.dialect);
-            for attachment in &analysis.script_attachments {
-                sfc_dialects_by_source
-                    .entry(attachment.target_source_id.clone())
-                    .or_default()
-                    .insert(analysis.dialect);
-            }
-            sfc_facts.extend(analysis.file_facts);
         }
+        sfc_facts.extend(analysis.file_facts);
+    }
 
-        let mut facts = physical_facts;
-        facts.extend(sfc_facts);
-        lumin_js::scope_dynamic_import_limitations(&mut facts, sources);
-        let inventory_bound_uses = lumin_js::scope_import_meta_globs(
-            &mut facts,
-            sources,
-            lumin_inventory::HARD_EXCLUDED_COMPONENTS,
-        );
-        synchronize_sfc_states(&facts, &sfc_dialects_by_source, &mut sfc_states);
-        Ok(ExtractionOutput {
-            facts: reduce_file_facts(facts),
-            inventory_bound_uses,
-            sfc_states,
-            js_parse_product_count: physical_parse_product_count + embedded_parse_product_count,
-        })
+    let mut facts = physical_facts;
+    facts.extend(sfc_facts);
+    lumin_js::scope_dynamic_import_limitations(&mut facts, sources);
+    let inventory_bound_uses = lumin_js::scope_import_meta_globs(
+        &mut facts,
+        sources,
+        lumin_inventory::HARD_EXCLUDED_COMPONENTS,
+    );
+    synchronize_sfc_states(&facts, &sfc_dialects_by_source, &mut sfc_states);
+    Ok(ExtractionOutput {
+        facts: reduce_file_facts(facts),
+        inventory_bound_uses,
+        sfc_states,
+        js_parse_product_count: physical_parse_product_count + embedded_parse_product_count,
     })
 }
 

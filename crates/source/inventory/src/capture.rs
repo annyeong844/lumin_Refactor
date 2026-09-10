@@ -171,11 +171,37 @@ pub(crate) fn open_source_file(path: &Path) -> std::io::Result<File> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    unsafe_code,
+    reason = "OpenOptions masks O_PATH on musl, so identity-only opens use the Linux C ABI"
+)]
 fn open_identity_file(path: &Path) -> std::io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::ffi::{CString, c_char, c_int};
+    use std::os::fd::FromRawFd;
+    use std::os::unix::ffi::OsStrExt;
 
-    const O_PATH: i32 = 0x20_0000;
-    File::options().read(true).custom_flags(O_PATH).open(path)
+    const O_PATH: c_int = 0x20_0000;
+    const O_CLOEXEC: c_int = 0x8_0000;
+    unsafe extern "C" {
+        fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+    }
+
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    loop {
+        // SAFETY: `path` remains NUL-terminated and live throughout this call.
+        // Neither flag creates a file or requires a variadic mode argument.
+        // O_PATH never opens the payload, including for FIFOs and devices.
+        let fd = unsafe { open(path.as_ptr(), O_PATH | O_CLOEXEC) };
+        if fd >= 0 {
+            // SAFETY: successful open returned a new descriptor owned only here.
+            return Ok(unsafe { File::from_raw_fd(fd) });
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 #[cfg(unix)]

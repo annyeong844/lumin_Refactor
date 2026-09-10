@@ -15,9 +15,11 @@ use std::fs;
 use std::ops::Deref;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fs2::FileExt;
 use lumin_model::{RepositoryBinding, RepositoryId};
+use redb::{StorageBackend, backends::InMemoryBackend};
 
 use crate::{StoreError, io_error};
 use bootstrap::{BootstrapCrashPoint, bootstrap_namespace, hit as bootstrap_hit};
@@ -57,10 +59,7 @@ use store_header::*;
 
 pub(super) enum MigrationDatabase {
     Direct(redb::Database),
-    Detached {
-        database: redb::Database,
-        _unpublished: platform::UnpublishedFile,
-    },
+    Detached(redb::Database),
 }
 
 impl Deref for MigrationDatabase {
@@ -68,26 +67,25 @@ impl Deref for MigrationDatabase {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Direct(database) | Self::Detached { database, .. } => database,
+            Self::Direct(database) | Self::Detached(database) => database,
         }
     }
 }
 
 fn detached_database(
-    guard: &NamespaceGuard,
+    _guard: &NamespaceGuard,
     entry: &HeldEntry,
 ) -> Result<MigrationDatabase, StoreError> {
     let bytes = entry.read_all()?;
-    let unpublished =
-        platform::UnpublishedFile::create(&guard.state.state_dir, &guard.state_directory)?;
-    unpublished.entry().replace_contents(&bytes)?;
+    let backend = InMemoryBackend::new();
+    let length = u64::try_from(bytes.len())
+        .map_err(|_| StoreError::Integrity("lifecycle.store byte count overflow".to_owned()))?;
+    backend.set_len(length).map_err(io_error)?;
+    backend.write(0, &bytes).map_err(io_error)?;
     let database = redb::Database::builder()
-        .create_file(unpublished.entry().file().try_clone().map_err(io_error)?)
+        .create_with_backend(backend)
         .map_err(crate::backend_error)?;
-    Ok(MigrationDatabase::Detached {
-        database,
-        _unpublished: unpublished,
-    })
+    Ok(MigrationDatabase::Detached(database))
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +108,7 @@ pub(super) struct NamespaceGuard {
     lock: HeldEntry,
     managed_parents: Vec<HeldManagedParent>,
     cache_evictions: HeldCacheEvictionParent,
+    backend_access_rejected: AtomicBool,
 }
 
 struct HeldManagedParent {
@@ -201,7 +200,13 @@ impl NamespaceState {
         Self::open_bound(repository, state_dir, state_directory, marker_path).map(Some)
     }
 
-    pub(super) fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
+    pub(super) fn open(
+        root: &Path,
+        binding: &RepositoryBinding,
+        #[cfg(feature = "audit-store-test-profile")] profile: Option<
+            &mut crate::audit_profile::StoreProfiler,
+        >,
+    ) -> Result<Self, StoreError> {
         let repository = HeldRepository::open(root, binding.clone())?;
         let state_dir = repository.path.join(".lumin");
         bootstrap_hit(BootstrapCrashPoint::BeforeStateDirectory);
@@ -226,6 +231,8 @@ impl NamespaceState {
                 state_dir,
                 state_directory,
                 state_directory_created,
+                #[cfg(feature = "audit-store-test-profile")]
+                profile,
             );
         }
 
@@ -291,9 +298,7 @@ impl NamespaceState {
         state_directory: HeldEntry,
         marker_path: PathBuf,
     ) -> Result<Self, StoreError> {
-        let state = Self::bind_existing(repository, state_dir, state_directory, marker_path)?;
-        state.ensure_store_ready()?;
-        Ok(state)
+        Self::bind_existing(repository, state_dir, state_directory, marker_path)
     }
 
     fn bind_existing(
@@ -334,6 +339,18 @@ impl NamespaceState {
         self.with_lock(
             true,
             LockPurpose::Ordinary,
+            None::<fn() -> Result<(), StoreError>>,
+            operation,
+        )
+    }
+
+    pub(super) fn with_admission_exclusive_lock<T>(
+        &self,
+        operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock(
+            true,
+            LockPurpose::Admission,
             None::<fn() -> Result<(), StoreError>>,
             operation,
         )
@@ -400,48 +417,151 @@ impl NamespaceState {
     where
         C: FnOnce() -> Result<(), StoreError>,
     {
-        let lock = self.open_prevalidated_lock()?;
+        self.with_lock_core(
+            exclusive,
+            purpose,
+            on_contention,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+            #[cfg(feature = "audit-store-test-profile")]
+            None,
+            |guard, #[cfg(feature = "audit-store-test-profile")] _profile| operation(guard),
+        )
+    }
+
+    #[cfg(feature = "audit-store-test-profile")]
+    pub(super) fn with_profiled_lock<T>(
+        &self,
+        exclusive: bool,
+        admission: bool,
+        profile: Option<&mut crate::audit_profile::StoreProfiler>,
+        phases: (
+            lumin_model::audit_store_diagnostic::AuditStorePhase,
+            lumin_model::audit_store_diagnostic::AuditStorePhase,
+        ),
+        #[cfg(feature = "audit-boundary-test-profile")] boundaries: (
+            lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+            lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+        ),
+        operation: impl FnOnce(
+            &NamespaceGuard,
+            Option<&mut crate::audit_profile::StoreProfiler>,
+        ) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock_core(
+            exclusive,
+            if admission {
+                LockPurpose::Admission
+            } else {
+                LockPurpose::Ordinary
+            },
+            None::<fn() -> Result<(), StoreError>>,
+            profile,
+            Some(LockProfilePhases {
+                store: phases,
+                #[cfg(feature = "audit-boundary-test-profile")]
+                boundaries,
+            }),
+            operation,
+        )
+    }
+
+    fn with_lock_core<T, C>(
+        &self,
+        exclusive: bool,
+        purpose: LockPurpose,
+        on_contention: Option<C>,
+        #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
+            &mut crate::audit_profile::StoreProfiler,
+        >,
+        #[cfg(feature = "audit-store-test-profile")] phase_observations: Option<LockProfilePhases>,
+        #[cfg(not(feature = "audit-store-test-profile"))] operation: impl FnOnce(
+            &NamespaceGuard,
+        ) -> Result<
+            T,
+            StoreError,
+        >,
+        #[cfg(feature = "audit-store-test-profile")] operation: impl FnOnce(
+            &NamespaceGuard,
+            Option<&mut crate::audit_profile::StoreProfiler>,
+        )
+            -> Result<T, StoreError>,
+    ) -> Result<T, StoreError>
+    where
+        C: FnOnce() -> Result<(), StoreError>,
+    {
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let boundaries = phase_observations.as_ref().map(|phases| phases.boundaries);
+        #[cfg(feature = "audit-store-test-profile")]
+        let phases = phase_observations.map(|phases| phases.store);
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((enter, _))) = (profile.as_deref_mut(), phases) {
+            profile.begin(enter);
+        }
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary_recorder = profile.as_ref().and_then(|_| {
+            boundaries
+                .map(|(enter, _)| crate::audit_lifecycle_profile::BoundaryProfiler::new(enter))
+        });
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary = boundary_recorder.as_mut();
+        let lock = boundary_cost!(boundary, GuardPrevalidation, self.open_prevalidated_lock())?;
         if exclusive {
             match on_contention {
                 Some(on_contention) => match lock.file().try_lock_exclusive() {
                     Ok(()) => {}
                     Err(error) if lock_contended(&error) => {
                         on_contention()?;
-                        FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+                        boundary_cost!(
+                            boundary,
+                            LifecycleLockAcquire,
+                            FileExt::lock_exclusive(lock.file()).map_err(io_error)
+                        )?;
                     }
                     Err(error) => return Err(io_error(error)),
                 },
-                None => FileExt::lock_exclusive(lock.file()).map_err(io_error)?,
+                None => {
+                    #[cfg(feature = "namespace-test-crash")]
+                    barrier::lock_exclusive_for_namespace_test(lock.file())?;
+                    #[cfg(not(feature = "namespace-test-crash"))]
+                    boundary_cost!(
+                        boundary,
+                        LifecycleLockAcquire,
+                        FileExt::lock_exclusive(lock.file()).map_err(io_error)
+                    )?;
+                }
             }
         } else {
-            FileExt::lock_shared(lock.file()).map_err(io_error)?;
+            boundary_cost!(
+                boundary,
+                LifecycleLockAcquire,
+                FileExt::lock_shared(lock.file()).map_err(io_error)
+            )?;
         }
-        let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
-        let result = match purpose {
-            LockPurpose::Ordinary => migration::require_idle(&guard)
-                .and_then(|()| guard.validate_complete())
-                .and_then(|()| {
-                    #[cfg(feature = "namespace-test-crash")]
-                    barrier::wait_after_complete_validation()?;
-                    guard.validate_complete()
-                })
-                .and_then(|()| operation(&guard)),
-            LockPurpose::Migration => operation(&guard),
-            #[cfg(any(
-                test,
-                feature = "logical-store-snapshot-test",
-                feature = "namespace-test-crash",
-                feature = "retention-test-crash"
-            ))]
-            LockPurpose::Observation => migration::require_idle(&guard)
-                .and_then(|()| guard.validate_bound_entries())
-                .and_then(|()| operation(&guard)),
-        };
-        let final_validation = match purpose {
-            LockPurpose::Ordinary => {
-                migration::require_idle(&guard).and_then(|()| guard.validate_complete())
-            }
-            LockPurpose::Migration => guard.validate_bound_entries(),
+        let guard = boundary_cost!(
+            boundary,
+            GuardConstruction,
+            NamespaceGuard::acquire_without_store(self.clone(), lock)
+        )?;
+        let admission = match purpose {
+            LockPurpose::Ordinary => migration::require_idle(&guard).and_then(|()| {
+                guard.validate_complete_at_namespace_test_boundary_profiled(
+                    #[cfg(feature = "audit-boundary-test-profile")]
+                    boundary.as_deref_mut(),
+                )
+            }),
+            LockPurpose::Admission => migration::admit_ordinary_profiled(
+                &guard,
+                #[cfg(feature = "audit-boundary-test-profile")]
+                boundary.as_deref_mut(),
+            )
+            .and_then(|()| {
+                guard.validate_complete_at_namespace_test_boundary_profiled(
+                    #[cfg(feature = "audit-boundary-test-profile")]
+                    boundary,
+                )
+            }),
+            LockPurpose::Migration => Ok(()),
             #[cfg(any(
                 test,
                 feature = "logical-store-snapshot-test",
@@ -452,8 +572,74 @@ impl NamespaceState {
                 migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
             }
         };
-        let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
-        combine_lock_results(result, final_validation, unlock)
+        let admitted = admission.is_ok();
+        #[cfg(feature = "audit-boundary-test-profile")]
+        if let (Some(profile), Some(recorder)) = (profile.as_deref_mut(), boundary_recorder) {
+            profile.record_boundary(recorder.finish());
+        }
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((enter, _))) = (profile.as_deref_mut(), phases) {
+            profile.end(enter);
+        }
+        let result = admission.and_then(|()| {
+            operation(
+                &guard,
+                #[cfg(feature = "audit-store-test-profile")]
+                profile.as_deref_mut(),
+            )
+        });
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((_, exit))) = (profile.as_deref_mut(), phases) {
+            profile.begin(exit);
+        }
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary_recorder = profile.as_ref().and_then(|_| {
+            boundaries.map(|(_, exit)| crate::audit_lifecycle_profile::BoundaryProfiler::new(exit))
+        });
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary = boundary_recorder.as_mut();
+        let result = result.and_then(|value| guard.require_backend_access().map(|()| value));
+        let final_validation = if !admitted || guard.backend_access_rejected.load(Ordering::SeqCst)
+        {
+            // A refused schema or rejected original store must not be reopened by redb in
+            // writable mode. Even opening/closing changes private backend recovery metadata.
+            guard.validate_bound_entries()
+        } else {
+            match purpose {
+                LockPurpose::Ordinary | LockPurpose::Admission => migration::require_idle(&guard)
+                    .and_then(|()| {
+                        guard.validate_complete_profiled(
+                            #[cfg(feature = "audit-boundary-test-profile")]
+                            boundary.as_deref_mut(),
+                        )
+                    }),
+                LockPurpose::Migration => guard.validate_bound_entries(),
+                #[cfg(any(
+                    test,
+                    feature = "logical-store-snapshot-test",
+                    feature = "namespace-test-crash",
+                    feature = "retention-test-crash"
+                ))]
+                LockPurpose::Observation => {
+                    migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
+                }
+            }
+        };
+        let unlock = boundary_cost!(
+            boundary,
+            LifecycleLockRelease,
+            FileExt::unlock(guard.lock.file()).map_err(io_error)
+        );
+        let result = combine_lock_results(result, final_validation, unlock);
+        #[cfg(feature = "audit-boundary-test-profile")]
+        if let (Some(profile), Some(recorder)) = (profile.as_deref_mut(), boundary_recorder) {
+            profile.record_boundary(recorder.finish());
+        }
+        #[cfg(feature = "audit-store-test-profile")]
+        if let (Some(profile), Some((_, exit))) = (profile, phases) {
+            profile.end(exit);
+        }
+        result
     }
 
     fn open_prevalidated_lock(&self) -> Result<HeldEntry, StoreError> {
@@ -525,21 +711,32 @@ impl NamespaceState {
         FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
         let result = migration::admit_ordinary(&guard);
-        let final_validation = result
-            .and_then(|()| guard.validate_complete())
-            .and_then(|()| {
-                #[cfg(feature = "namespace-test-crash")]
-                barrier::wait_after_complete_validation()?;
-                guard.validate_complete()
-            });
+        let final_validation =
+            result.and_then(|()| guard.validate_complete_at_namespace_test_boundary());
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
     }
 }
 
+// The W9 subdivisions travel with their containing W3 phases, without retaining
+// an observer or any product resource on this diagnostic-only descriptor.
+#[cfg(feature = "audit-store-test-profile")]
+struct LockProfilePhases {
+    store: (
+        lumin_model::audit_store_diagnostic::AuditStorePhase,
+        lumin_model::audit_store_diagnostic::AuditStorePhase,
+    ),
+    #[cfg(feature = "audit-boundary-test-profile")]
+    boundaries: (
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+    ),
+}
+
 #[derive(Clone, Copy)]
 enum LockPurpose {
     Ordinary,
+    Admission,
     Migration,
     #[cfg(any(
         test,
@@ -606,9 +803,23 @@ impl NamespaceGuard {
             lock,
             managed_parents,
             cache_evictions,
+            backend_access_rejected: AtomicBool::new(false),
         };
         guard.validate_bound_entries()?;
         Ok(guard)
+    }
+
+    pub(crate) fn reject_backend_access(&self) {
+        self.backend_access_rejected.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn require_backend_access(&self) -> Result<(), StoreError> {
+        if self.backend_access_rejected.load(Ordering::SeqCst) {
+            return Err(StoreError::Integrity(
+                "lifecycle backend access was rejected for this namespace guard".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn mutate<T>(
@@ -824,10 +1035,58 @@ impl NamespaceGuard {
     }
 
     fn validate_complete(&self) -> Result<(), StoreError> {
-        self.validate_bound_entries()?;
-        let database = self.open_database()?;
-        drop(database);
-        self.validate_bound_entries()
+        self.validate_complete_profiled(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            None,
+        )
+    }
+
+    fn validate_complete_profiled(
+        &self,
+        #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut observer = profile
+            .as_deref_mut()
+            .map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+        let database = self.open_database_observed(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            observer.as_mut(),
+            #[cfg(all(
+                feature = "audit-lifecycle-test-profile",
+                not(feature = "audit-boundary-test-profile")
+            ))]
+            None,
+        )?;
+        boundary_cost!(profile, DatabaseExplicitDrop, drop(database));
+        Ok(())
+    }
+
+    fn validate_complete_at_namespace_test_boundary(&self) -> Result<(), StoreError> {
+        self.validate_complete_at_namespace_test_boundary_profiled(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            None,
+        )
+    }
+
+    fn validate_complete_at_namespace_test_boundary_profiled(
+        &self,
+        #[cfg(feature = "audit-boundary-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        self.validate_complete_profiled(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            profile,
+        )?;
+        #[cfg(feature = "namespace-test-crash")]
+        {
+            barrier::wait_after_complete_validation()?;
+            self.validate_complete()?;
+        }
+        Ok(())
     }
 
     pub(crate) fn validate_bound_entries(&self) -> Result<(), StoreError> {

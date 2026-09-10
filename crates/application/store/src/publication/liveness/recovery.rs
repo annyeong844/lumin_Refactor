@@ -236,6 +236,24 @@ pub(super) fn finish_releasing(
     lease: &AttemptLeaseRecord,
     lock: Option<HeldEntry>,
 ) -> Result<(), StoreError> {
+    finish_releasing_profiled(
+        store,
+        guard,
+        lease,
+        lock,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+    )
+}
+pub(super) fn finish_releasing_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    lease: &AttemptLeaseRecord,
+    lock: Option<HeldEntry>,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+) -> Result<(), StoreError> {
     if lease.state != AttemptLeaseState::Releasing {
         return Err(StoreError::Integrity(format!(
             "attempt lease is not releasing: {}",
@@ -245,17 +263,33 @@ pub(super) fn finish_releasing(
     let lock_path = store.state_dir.join(&lease.lock_name);
     match lock {
         Some(lock) => {
-            records::validate_lock(guard, &lock, lease)?;
-            lock.validate_path(
-                &lock_path,
-                crate::namespace::EntryKind::RegularFile,
-                crate::namespace::EntryAccess::ReadWrite,
-                true,
-                "attempt process-liveness lock",
+            boundary_cost!(
+                profile,
+                AttemptLockValidation,
+                records::validate_lock(guard, &lock, lease)
             )?;
-            drop(lock);
-            fs::remove_file(&lock_path).map_err(io_error)?;
-            guard.state_directory_entry().sync_directory()?;
+            boundary_cost!(
+                profile,
+                AttemptLockValidation,
+                lock.validate_path(
+                    &lock_path,
+                    crate::namespace::EntryKind::RegularFile,
+                    crate::namespace::EntryAccess::ReadWrite,
+                    true,
+                    "attempt process-liveness lock",
+                )
+            )?;
+            boundary_cost!(profile, AttemptLockDrop, drop(lock));
+            boundary_cost!(
+                profile,
+                AttemptLockRemove,
+                fs::remove_file(&lock_path).map_err(io_error)
+            )?;
+            boundary_cost!(
+                profile,
+                DirectorySync,
+                guard.state_directory_entry().sync_directory()
+            )?;
         }
         None if entry_exists(&lock_path)? => {
             return Err(StoreError::Integrity(format!(
@@ -265,7 +299,16 @@ pub(super) fn finish_releasing(
         }
         None => {}
     }
-    records::remove(guard, lease)
+    let result = records::remove_profiled(
+        guard,
+        lease,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile.as_deref_mut(),
+    );
+    if result.is_ok() {
+        boundary_end!(profile, DatabaseReturnTail);
+    }
+    result
 }
 
 fn acquire_releasing_lock(

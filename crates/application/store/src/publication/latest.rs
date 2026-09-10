@@ -1,18 +1,27 @@
 use std::collections::BTreeMap;
 
 use lumin_model::{AttemptId, AttemptStatus, RunId};
-use redb::TableError;
+use redb::{ReadableTable, ReadableTableMetadata, TableError};
 use serde::{Deserialize, Serialize};
 
 use super::files;
 use super::{AttemptEnvelope, LatestRunSnapshot};
-use crate::namespace::{NamespaceGuard, entry_exists, records::ManagedStateParentKind};
+use crate::namespace::{
+    NamespaceGuard,
+    database::{StoreDatabase, StoreWriteTransaction},
+    entry_exists,
+    records::ManagedStateParentKind,
+};
 use crate::{
-    POINTERS, RepositoryStore, StoreError, backend_error, read_catalog_record, read_live_run,
+    POINTERS, RepositoryStore, StoreError, backend_error, read_catalog_record_profiled,
+    read_live_run,
 };
 
 const LATEST_SCHEMA: &str = "lumin-latest.v1";
 const LATEST_NAME: &str = "latest.json";
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -47,33 +56,75 @@ impl Default for LatestPointer {
     }
 }
 
-pub(super) fn ensure(store: &RepositoryStore, guard: &NamespaceGuard) -> Result<(), StoreError> {
+pub(super) fn ensure_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
     let latest_path = store.state_dir.join(LATEST_NAME);
-    files::validate_and_remove_pending(
+    files::validate_and_remove_pending_profiled(
         &latest_path.with_extension("json.pending"),
         guard.state_directory_entry(),
         "latest pointer pending file",
-        |pending: &LatestPointer| {
+        |pending: &LatestPointer,
+         #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| {
             validate_pointer_schema(pending)?;
-            validate_document(store, guard, pending)
+            validate_document_profiled(
+                store,
+                guard,
+                pending,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile,
+            )
         },
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
     )?;
+    let mut empty_index = false;
     let latest = if entry_exists(&latest_path)? {
         read_document(store, guard)?
     } else {
-        let derived = derive_legacy_document(store, guard)?;
-        if derived != LatestPointer::default() {
-            files::write_json(
+        let derived = derive_legacy_document(
+            store,
+            guard,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile.as_deref_mut(),
+        );
+        lifecycle_end!(profile, DatabaseReturnTail);
+        let derived = derived?;
+        empty_index = derived.empty_index;
+        if derived.latest != LatestPointer::default() {
+            files::write_json_profiled(
                 &latest_path,
                 guard.state_directory_entry(),
                 "latest pointer",
-                &derived,
+                &derived.latest,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile.as_deref_mut(),
             )?;
         }
-        derived
+        derived.latest
     };
-    validate_document(store, guard, &latest)?;
-    sync_index(guard, &latest)
+    validate_document_profiled(
+        store,
+        guard,
+        &latest,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    if empty_index {
+        return Ok(());
+    }
+    sync_index_profiled(
+        guard,
+        &latest,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+    )
 }
 
 pub(super) fn snapshot(store: &RepositoryStore) -> Result<LatestRunSnapshot, StoreError> {
@@ -113,9 +164,34 @@ pub(super) fn publish_attempt(
     attempt: &AttemptEnvelope,
     terminal_crash_hooks: bool,
 ) -> Result<(), StoreError> {
+    publish_attempt_profiled(
+        store,
+        guard,
+        attempt,
+        terminal_crash_hooks,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn publish_attempt_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    attempt: &AttemptEnvelope,
+    terminal_crash_hooks: bool,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
     validate_attempt_envelope(attempt)?;
     let current = read_document(store, guard)?;
-    validate_document(store, guard, &current)?;
+    validate_document_profiled(
+        store,
+        guard,
+        &current,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
     #[cfg(feature = "publication-test-crash")]
     if terminal_crash_hooks {
         super::barrier::wait_guarded(&attempt.attempt_id)?;
@@ -128,7 +204,7 @@ pub(super) fn publish_attempt(
     let merged = merge(current, candidate, attempt.run_id.as_ref())?;
     if merged.changed {
         let path = store.state_dir.join(LATEST_NAME);
-        files::write_json_with_hooks(
+        files::write_json_with_hooks_profiled(
             &path,
             guard.state_directory_entry(),
             "latest pointer",
@@ -138,8 +214,10 @@ pub(super) fn publish_attempt(
                     hit_terminal_temp();
                 }
             },
-            || {
-                guard.validate_bound_entries()?;
+            |#[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+                &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+            >| {
+                lifecycle_cost!(profile, NamespaceValidation, guard.validate_bound_entries())?;
                 #[cfg(feature = "namespace-test-crash")]
                 if terminal_crash_hooks {
                     crate::namespace::barrier::wait_before_latest_replace()?;
@@ -151,10 +229,23 @@ pub(super) fn publish_attempt(
                     hit_terminal_replace();
                 }
             },
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile.as_deref_mut(),
         )?;
     }
-    validate_document(store, guard, &merged.pointer)?;
-    sync_index(guard, &merged.pointer)
+    validate_document_profiled(
+        store,
+        guard,
+        &merged.pointer,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    sync_index_profiled(
+        guard,
+        &merged.pointer,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+    )
 }
 
 pub(super) fn read_document(
@@ -379,18 +470,62 @@ fn validate_document(
     guard: &NamespaceGuard,
     latest: &LatestPointer,
 ) -> Result<(), StoreError> {
-    let mut read_run = |run_id: &RunId| {
-        let database = guard.open_database()?;
-        read_catalog_record(&database, run_id)
+    validate_document_profiled(
+        store,
+        guard,
+        latest,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+fn validate_document_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
+    let mut read_run = |run_id: &RunId,
+                        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >| {
+        let database = guard.open_database_profiled(
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile.as_deref_mut(),
+        )?;
+        let result = read_catalog_record_profiled(
+            &database,
+            run_id,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile.as_deref_mut(),
+        );
+        if result.is_ok() {
+            lifecycle_begin!(profile, DatabaseReturnTail);
+        }
+        result
     };
-    let mut has_active_lease =
-        |attempt_id: &AttemptId| super::liveness::has_active_lease(guard, attempt_id);
-    validate_document_at(
+    let mut has_active_lease = |attempt_id: &AttemptId,
+                                #[cfg(feature = "audit-lifecycle-test-profile")]
+                                profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >| {
+        super::liveness::has_active_lease_profiled(
+            guard,
+            attempt_id,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile,
+        )
+    };
+    validate_document_at_profiled(
         &store.state_dir,
         guard,
         latest,
         &mut read_run,
         &mut has_active_lease,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
     )
 }
 
@@ -400,6 +535,58 @@ fn validate_document_at(
     latest: &LatestPointer,
     read_run: &mut impl FnMut(&RunId) -> Result<crate::RunCatalogRecord, StoreError>,
     has_active_lease: &mut impl FnMut(&AttemptId) -> Result<bool, StoreError>,
+) -> Result<(), StoreError> {
+    validate_document_at_profiled(
+        state_dir,
+        guard,
+        latest,
+        &mut |run_id: &RunId,
+              #[cfg(feature = "audit-lifecycle-test-profile")] _profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| read_run(run_id),
+        &mut |attempt_id: &AttemptId,
+              #[cfg(feature = "audit-lifecycle-test-profile")] _profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| has_active_lease(attempt_id),
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+fn validate_document_at_profiled(
+    state_dir: &std::path::Path,
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    #[cfg(feature = "audit-lifecycle-test-profile")] read_run: &mut impl FnMut(
+        &RunId,
+        Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>,
+    ) -> Result<
+        crate::RunCatalogRecord,
+        StoreError,
+    >,
+    #[cfg(not(feature = "audit-lifecycle-test-profile"))] read_run: &mut impl FnMut(
+        &RunId,
+    ) -> Result<
+        crate::RunCatalogRecord,
+        StoreError,
+    >,
+    #[cfg(feature = "audit-lifecycle-test-profile")] has_active_lease: &mut impl FnMut(
+        &AttemptId,
+        Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>,
+    ) -> Result<
+        bool,
+        StoreError,
+    >,
+    #[cfg(not(feature = "audit-lifecycle-test-profile"))] has_active_lease: &mut impl FnMut(
+        &AttemptId,
+    )
+        -> Result<
+        bool,
+        StoreError,
+    >,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
 ) -> Result<(), StoreError> {
     let latest_attempt = latest
         .latest_attempt
@@ -415,7 +602,13 @@ fn validate_document_at(
                     "latestAttempt disagrees with its attempt envelope".to_owned(),
                 ));
             }
-            if pointer.status == AttemptStatus::Running && !has_active_lease(&pointer.attempt_id)? {
+            if pointer.status == AttemptStatus::Running
+                && !has_active_lease(
+                    &pointer.attempt_id,
+                    #[cfg(feature = "audit-lifecycle-test-profile")]
+                    profile.as_deref_mut(),
+                )?
+            {
                 return Err(StoreError::Integrity(
                     "running latestAttempt has no process-liveness lease".to_owned(),
                 ));
@@ -425,7 +618,13 @@ fn validate_document_at(
         .transpose()?;
 
     if let Some(pointer) = &latest.latest_completed {
-        let record = read_run(&pointer.run_id)?;
+        let record = read_run(
+            &pointer.run_id,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile.as_deref_mut(),
+        );
+        lifecycle_end!(profile, DatabaseReturnTail);
+        let record = record?;
         if record.sequence != pointer.sequence {
             return Err(StoreError::Integrity(
                 "latestCompleted disagrees with its run catalog record".to_owned(),
@@ -452,17 +651,154 @@ fn validate_document_at(
     Ok(())
 }
 
+#[derive(Debug)]
+struct DerivedLatest {
+    latest: LatestPointer,
+    empty_index: bool,
+}
+
 fn derive_legacy_document(
     store: &RepositoryStore,
     guard: &NamespaceGuard,
-) -> Result<LatestPointer, StoreError> {
-    let database = guard.open_database()?;
-    let read = database.begin_read()?;
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<DerivedLatest, StoreError> {
+    derive_latest_with_hooks(
+        store,
+        guard,
+        |_database| {
+            #[cfg(feature = "namespace-test-crash")]
+            crate::namespace::barrier::wait_after_latest_derivation_open(_database)?;
+            Ok(())
+        },
+        |_database| {
+            #[cfg(feature = "namespace-test-crash")]
+            crate::namespace::barrier::wait_before_empty_latest_return(_database)?;
+            Ok(())
+        },
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile,
+    )
+}
+
+fn derive_latest_with_hooks(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    after_open: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
+    before_return: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<DerivedLatest, StoreError> {
+    let database = match guard.open_database_profiled(
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    ) {
+        Ok(database) => database,
+        Err(error) => {
+            guard.reject_backend_access();
+            return Err(error);
+        }
+    };
+    // No table/transaction borrow escapes this retained result, even on error.
+    let result = (|| {
+        after_open(&database)?;
+        read_derived_latest(
+            store,
+            guard,
+            &database,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            profile.as_deref_mut(),
+        )
+    })();
+    let empty = result.as_ref().is_ok_and(|derived| derived.empty_index);
+    let absence = if empty {
+        require_latest_absent(guard)
+    } else {
+        Ok(())
+    };
+    let mut final_absence = Ok(());
+    // Finishing has priority over either a read error or a late pointer arrival.
+    // A rejected original guard must not reopen a foreign store during unwind.
+    let validation = database.finish_latest_derivation_read(
+        || {
+            if empty {
+                before_return(&database)?;
+                final_absence = require_latest_absent(guard);
+            }
+            Ok(())
+        },
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    );
+    validation?;
+    absence?;
+    final_absence?;
+    if result.is_ok() {
+        lifecycle_begin!(profile, DatabaseReturnTail);
+    }
+    result
+}
+
+fn require_latest_absent(guard: &NamespaceGuard) -> Result<(), StoreError> {
+    let names = guard
+        .state_directory_entry()
+        .directory_names("latest pointer absence")?;
+    let appeared = names.iter().any(|name| {
+        #[cfg(windows)]
+        {
+            // All owned direct state names are ASCII. Do not guess Unicode
+            // aliases here; preserve any opaque name and fail closed. Fixed
+            // pointer names obey Windows case-insensitive lookup semantics.
+            name.to_str().is_none_or(|name| {
+                !name.is_ascii()
+                    || name.eq_ignore_ascii_case("latest.json")
+                    || name.eq_ignore_ascii_case("latest.json.pending")
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            name == "latest.json" || name == "latest.json.pending"
+        }
+    });
+    if appeared {
+        return Err(StoreError::Integrity(
+            "latest pointer appeared during empty index derivation".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_derived_latest(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    database: &StoreDatabase<'_>,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<DerivedLatest, StoreError> {
+    let read = lifecycle_cost!(profile, ReadAdmission, database.begin_read())?;
     let table = match read.open_table(POINTERS) {
         Ok(table) => table,
-        Err(TableError::TableDoesNotExist(_)) => return Ok(LatestPointer::default()),
+        Err(TableError::TableDoesNotExist(_)) => {
+            return Ok(DerivedLatest {
+                latest: LatestPointer::default(),
+                empty_index: true,
+            });
+        }
         Err(error) => return Err(backend_error(error)),
     };
+    let empty_index = table.is_empty().map_err(backend_error)?;
+    for row in table.iter().map_err(backend_error)? {
+        let (key, _) = row.map_err(backend_error)?;
+        if !matches!(key.value(), "latest-attempt" | "latest-completed") {
+            return Err(StoreError::Integrity(format!(
+                "unknown latest pointer index key: {}",
+                key.value()
+            )));
+        }
+    }
     let latest_attempt = table
         .get("latest-attempt")
         .map_err(backend_error)?
@@ -483,25 +819,136 @@ fn derive_legacy_document(
         .map(|value| parse_run_id(value.value(), "legacy latest-completed"))
         .transpose()?
         .map(|run_id| {
-            let record = read_catalog_record(&database, &run_id)?;
+            let record = read_catalog_record_profiled(
+                database,
+                &run_id,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile,
+            )?;
             Ok(LatestCompletedPointer {
                 run_id,
                 sequence: record.sequence,
             })
         })
         .transpose()?;
-    Ok(LatestPointer {
-        schema_version: LATEST_SCHEMA.to_owned(),
-        latest_attempt,
-        latest_completed,
+    Ok(DerivedLatest {
+        latest: LatestPointer {
+            schema_version: LATEST_SCHEMA.to_owned(),
+            latest_attempt,
+            latest_completed,
+        },
+        empty_index,
     })
 }
 
+#[cfg(test)]
 fn sync_index(guard: &NamespaceGuard, latest: &LatestPointer) -> Result<(), StoreError> {
-    let database = guard.open_database()?;
-    let write = database.begin_write()?;
+    sync_index_profiled(
+        guard,
+        latest,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+fn sync_index_profiled(
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
+    let result = sync_index_with_commit_profiled(
+        guard,
+        latest,
+        |write,
+         #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >| {
+            guard.commit_profiled(
+                write,
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile,
+            )
+        },
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    );
+    lifecycle_end!(profile, DatabaseReturnTail);
+    result
+}
+
+#[cfg(test)]
+fn sync_index_with_commit(
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    commit: impl FnOnce(StoreWriteTransaction<'_, '_>) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    sync_index_with_commit_profiled(
+        guard,
+        latest,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        |write, _profile: Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>| {
+            commit(write)
+        },
+        #[cfg(not(feature = "audit-lifecycle-test-profile"))]
+        commit,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        None,
+    )
+}
+
+fn sync_index_with_commit_profiled(
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    #[cfg(feature = "audit-lifecycle-test-profile")] commit: impl FnOnce(
+        StoreWriteTransaction<'_, '_>,
+        Option<&mut crate::audit_lifecycle_profile::LifecycleProfiler>,
+    ) -> Result<(), StoreError>,
+    #[cfg(not(feature = "audit-lifecycle-test-profile"))] commit: impl FnOnce(
+        StoreWriteTransaction<'_, '_>,
+    )
+        -> Result<(), StoreError>,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<(), StoreError> {
+    let database = guard.open_database_profiled(
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    let write = lifecycle_cost!(profile, WriteAdmission, database.begin_write())?;
     {
         let mut table = write.open_table(POINTERS).map_err(backend_error)?;
+        let attempt_matches = table
+            .get("latest-attempt")
+            .map_err(backend_error)?
+            .as_ref()
+            .map(|value| value.value())
+            == latest
+                .latest_attempt
+                .as_ref()
+                .map(|pointer| pointer.attempt_id.as_str().as_bytes());
+        let completed_matches = table
+            .get("latest-completed")
+            .map_err(backend_error)?
+            .as_ref()
+            .map(|value| value.value())
+            == latest
+                .latest_completed
+                .as_ref()
+                .map(|pointer| pointer.run_id.as_str().as_bytes());
+        if attempt_matches && completed_matches {
+            drop(table);
+            let result = write.abort_profiled(
+                #[cfg(feature = "audit-lifecycle-test-profile")]
+                profile.as_deref_mut(),
+            );
+            if result.is_ok() {
+                lifecycle_begin!(profile, DatabaseReturnTail);
+            }
+            return result;
+        }
         match &latest.latest_attempt {
             Some(pointer) => {
                 table
@@ -523,7 +970,15 @@ fn sync_index(guard: &NamespaceGuard, latest: &LatestPointer) -> Result<(), Stor
             }
         }
     }
-    guard.commit(write)
+    let result = commit(
+        write,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        profile.as_deref_mut(),
+    );
+    if result.is_ok() {
+        lifecycle_begin!(profile, DatabaseReturnTail);
+    }
+    result
 }
 
 struct MergeResult {

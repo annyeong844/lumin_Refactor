@@ -1,0 +1,4346 @@
+{
+  "blocking": true,
+  "capturedAtUnixNanoseconds": "1788546690064407702",
+  "defaultJobs": 8,
+  "environment": "wsl2-ext4",
+  "fixture": {
+    "contentManifestSha256": "9e51b070a934c027e6d2d9a4610fac764592ecb8f05bf41a2ab6f5eb46158d3e",
+    "fileCount": 780,
+    "generator": "reviews/probes/phase0-numeric-target-selection-2026-07-18/source/generate-scale-corpus.py",
+    "manifestSha256": "635240fea1f05e571f47e306b76f9cc307ff46089c2380521e0f349612467cd3",
+    "schemaVersion": "phase1-scale-findings.v1",
+    "totalBytes": 7461511,
+    "truthSha256": "1230a9c577fefd0b8df4844c832f26b9e2a33945acd27d867d03132bc36512f0"
+  },
+  "host": {
+    "architecture": "x86_64",
+    "cpuModel": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+    "filesystemClass": "ext4",
+    "filesystemMount": "/",
+    "kernelRelease": "6.6.87.2-microsoft-standard-WSL2",
+    "kernelVersion": "#1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025",
+    "logicalProcessorCount": 12,
+    "operatingSystem": "linux",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "pythonExecutable": "/home/endof/.cache/python-3.13.14/bin/python3.13",
+    "pythonVersion": "3.13.14",
+    "schemaVersion": "lumin.phase1-benchmark-host.v1",
+    "totalMemoryBytes": 8326946816,
+    "wsl": true
+  },
+  "observedAvailableParallelism": 12,
+  "osCacheConditioning": {
+    "actualJobs": 1,
+    "cacheState": "fresh-state-preconditioning",
+    "fixtureCopyNanoseconds": 63858105,
+    "measured": false,
+    "mode": "os-cache-conditioning-jobs-1",
+    "productProcess": {
+      "analysisChildPids": [],
+      "elapsedNanoseconds": 1397496105,
+      "exitCode": 0,
+      "observerResolutionNanoseconds": 1000000,
+      "peakRssBytes": 26660864,
+      "rssSource": "wait4-rusage-ru_maxrss-kib",
+      "schemaVersion": "lumin.phase1-process-measurement.v1"
+    },
+    "requestedJobs": 1,
+    "scope": {
+      "id": "run_0000000000000001",
+      "kind": "run",
+      "sequence": 1
+    },
+    "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+    "truthValidationNanoseconds": 656260149
+  },
+  "osCacheState": "machine-global caches were conditioned by one unmeasured fresh jobs=1 audit and not flushed; cold means fresh repository, state namespace, and process",
+  "package": {
+    "binary": "/home/endof/.cache/lumin-phase1-allocator-comparison-20260905/system-package/bin/lumin",
+    "binaryBytes": 11760576,
+    "binarySha256": "2675bf8b7c1c6b18b4a6a21704c876e00048d6bc44ef4a4ba5b1952dedbed083",
+    "buildId": "build_acb014ef1cd4a2e0f1f29c84a96ea1383fe8f2c168d57efc635e2d09bb098d3f",
+    "root": "/home/endof/.cache/lumin-phase1-allocator-comparison-20260905/system-package",
+    "target": "linux-x64"
+  },
+  "repetitionsPerMode": 3,
+  "samples": [
+    {
+      "actualJobs": 8,
+      "cacheState": "fresh-state",
+      "mode": "cold-audit-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1257972881,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26771456,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": null,
+      "scope": {
+        "id": "run_0000000000000001",
+        "kind": "run",
+        "sequence": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 58503005,
+        "measuredProcess": 1257972881,
+        "truthValidation": 680236634
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 1,
+      "cacheState": "fresh-state",
+      "mode": "cold-audit-jobs-1",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1501920375,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26460160,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": 1,
+      "scope": {
+        "id": "run_0000000000000001",
+        "kind": "run",
+        "sequence": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 63795103,
+        "measuredProcess": 1501920375,
+        "truthValidation": 667090234
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "warm-audit-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1189719559,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26652672,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": null,
+      "scope": {
+        "id": "run_0000000000000002",
+        "kind": "run",
+        "sequence": 2
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 58314103,
+        "measuredProcess": 1189719559,
+        "seedProcess": 1267723963,
+        "seedTruthValidation": 664361434,
+        "truthValidation": 668888933
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "fresh-state",
+      "mode": "cold-pre-write-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1422526117,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 28434432,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 0
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 60009303,
+        "measuredProcess": 1422526117,
+        "truthValidation": 1802833805
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "warm-pre-write-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1368532203,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 28356608,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 0
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 59274800,
+        "measuredProcess": 1368532203,
+        "seedProcess": 1254398204,
+        "seedTruthValidation": 674138901,
+        "truthValidation": 1810353305
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "post-write-one-file-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 2191911303,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 59244544,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 59308900,
+        "measuredProcess": 2191911303,
+        "numericOnlyMutation": 635600,
+        "setupProcess": 1395956902,
+        "setupTruthValidation": 1781078202,
+        "truthValidation": 4525066109
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "post-write-32-files-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 2408000906,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 61403136,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 1,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 56417901,
+        "measuredProcess": 2408000906,
+        "numericOnlyMutation": 2356300,
+        "setupProcess": 1462219703,
+        "setupTruthValidation": 1941223705,
+        "truthValidation": 4826202818
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "fresh-state",
+      "mode": "cold-audit-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1300867705,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 27086848,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": null,
+      "scope": {
+        "id": "run_0000000000000001",
+        "kind": "run",
+        "sequence": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 56635300,
+        "measuredProcess": 1300867705,
+        "truthValidation": 682362302
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 1,
+      "cacheState": "fresh-state",
+      "mode": "cold-audit-jobs-1",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1444527204,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26406912,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": 1,
+      "scope": {
+        "id": "run_0000000000000001",
+        "kind": "run",
+        "sequence": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 57085300,
+        "measuredProcess": 1444527204,
+        "truthValidation": 691120803
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "warm-audit-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1235098104,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26775552,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": null,
+      "scope": {
+        "id": "run_0000000000000002",
+        "kind": "run",
+        "sequence": 2
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 53940900,
+        "measuredProcess": 1235098104,
+        "seedProcess": 1265496404,
+        "seedTruthValidation": 687865802,
+        "truthValidation": 677534302
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "fresh-state",
+      "mode": "cold-pre-write-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1432510305,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 29028352,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 0
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 56412400,
+        "measuredProcess": 1432510305,
+        "truthValidation": 1819020397
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "warm-pre-write-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1338677296,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 28598272,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 0
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 55974800,
+        "measuredProcess": 1338677296,
+        "seedProcess": 1284196096,
+        "seedTruthValidation": 674642098,
+        "truthValidation": 1796604295
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "post-write-one-file-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 2233679606,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 59318272,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 53732799,
+        "measuredProcess": 2233679606,
+        "numericOnlyMutation": 312500,
+        "setupProcess": 1417715298,
+        "setupTruthValidation": 1781373405,
+        "truthValidation": 4384375019
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "post-write-32-files-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 2384822530,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 62029824,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 2,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 54034500,
+        "measuredProcess": 2384822530,
+        "numericOnlyMutation": 3231900,
+        "setupProcess": 1533454620,
+        "setupTruthValidation": 1979739225,
+        "truthValidation": 4762009032
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "fresh-state",
+      "mode": "cold-audit-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1326123007,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 27344896,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": null,
+      "scope": {
+        "id": "run_0000000000000001",
+        "kind": "run",
+        "sequence": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 58544100,
+        "measuredProcess": 1326123007,
+        "truthValidation": 724836604
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 1,
+      "cacheState": "fresh-state",
+      "mode": "cold-audit-jobs-1",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1405640707,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26480640,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": 1,
+      "scope": {
+        "id": "run_0000000000000001",
+        "kind": "run",
+        "sequence": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 53616800,
+        "measuredProcess": 1405640707,
+        "truthValidation": 671400303
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "warm-audit-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1220418505,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 26820608,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": null,
+      "scope": {
+        "id": "run_0000000000000002",
+        "kind": "run",
+        "sequence": 2
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 56719501,
+        "measuredProcess": 1220418505,
+        "seedProcess": 1252134205,
+        "seedTruthValidation": 676398503,
+        "truthValidation": 689588503
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "fresh-state",
+      "mode": "cold-pre-write-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1408011806,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 28504064,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 0
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 55434600,
+        "measuredProcess": 1408011806,
+        "truthValidation": 1786353407
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "warm-pre-write-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 1344852232,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 28880896,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 0
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 59305800,
+        "measuredProcess": 1344852232,
+        "seedProcess": 1281684346,
+        "seedTruthValidation": 691454565,
+        "truthValidation": 1774594110
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "post-write-one-file-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 2174066702,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 59019264,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 57289697,
+        "measuredProcess": 2174066702,
+        "numericOnlyMutation": 339600,
+        "setupProcess": 1379734730,
+        "setupTruthValidation": 1811397325,
+        "truthValidation": 4498102704
+      },
+      "workerStackBytes": 4194304
+    },
+    {
+      "actualJobs": 8,
+      "cacheState": "same-state-after-unmeasured-seed",
+      "mode": "post-write-32-files-default",
+      "productProcess": {
+        "analysisChildPids": [],
+        "elapsedNanoseconds": 2406338965,
+        "exitCode": 0,
+        "observerResolutionNanoseconds": 1000000,
+        "peakRssBytes": 61906944,
+        "rssSource": "wait4-rusage-ru_maxrss-kib",
+        "schemaVersion": "lumin.phase1-process-measurement.v1"
+      },
+      "repetition": 3,
+      "requestedJobs": null,
+      "scope": {
+        "gateId": "gate_0000000000000001",
+        "kind": "gate-attempt",
+        "revision": 1
+      },
+      "semanticDumpSha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523",
+      "stageTimingsNanoseconds": {
+        "fixtureCopy": 52298700,
+        "measuredProcess": 2406338965,
+        "numericOnlyMutation": 4245200,
+        "setupProcess": 1495026621,
+        "setupTruthValidation": 1947014253,
+        "truthValidation": 4752238595
+      },
+      "workerStackBytes": 4194304
+    }
+  ],
+  "scanInvocation": {
+    "findingFilters": {},
+    "include": [
+      "**"
+    ]
+  },
+  "schemaVersion": "lumin.phase1-foundation-benchmark.v1",
+  "semanticTruth": {
+    "mappingCount": 256,
+    "mappings": [
+      {
+        "findingId": "finding_0d7792c2a325a21abaee52fe80b5f0151eb06154bd358523b81b389ddcfd7127",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_4d983fb4fc26b6ff05a29f387bbf7102f01a3a4fbf7e18226700d1831ff34261",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_0eec636fb540d53f571053b19ecaa1ff08275d82dc945574e53b1f674a6eda75",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_d20a79b8afadf5dff7078af2a698ec4869a59a037d8304967ee9be02eb2cfe16",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_5c11d8edb2b6c0d363a27038dda3775c00b87ad3cc844b36a6f0503233af26ad",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_7edf5a348bee02f81699b57b329d93dc04abe98ac54f72d99092f080f1fe56f0",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_3866eff2fffd50c57eb1b29da21f5441d03b47246d4237f086e9b385b92e73fd",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_120bffe29a1b1f8799f9c2850951e43df2a3f2c763cfb0c29709b4957fe008a1",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_b1b180f8e124db34dc8154d0ba649f7f8deca3de804cb8707e28b0107acfa9dc",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_d917cf1210cc4c23e4a68e2d735000e5321e384da1d47f1c194f9beba3b85b68",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_9c7a2ec6c216eefa0aa107054806a2f1da45dee45fd87661adf35c125209cb14",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_a1677eadbb6003114bdceec17d53d30cc0eee8cdf3aa3b49e75d96b5a043679b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_4aa27cc149d133b959b53f718cb44dff8c6256cf2e09bd75684d9838339ee81d",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_db79bcf54dad5aacf957be1979e924c4cfe593b7eee24f9bdd24305750b0bc3b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_0b866375f4c0677800b0e1e17eb9ce56d629f497402d74b4af7c5a3eac7b7795",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_bb8956c4905a30bdebd20f113d231cc50210df3ef7e76b0c52d951d091621416",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_31c649f0295b1e6bd9c32d5d7332eba254d972f76bb851917301d6c7ca35b618",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_13b2744adacc6acc732a3f742738efca86cf38d964a477a5fbf5d5b491a9e842",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_018ae26bf042199b006db4f7dd7070900615e25fc5cb9a7de5e2d42ff422e3f3",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_d389451ca562ff650dc87899852864a2660d4a1727d40ddc37c74025270d9301",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_2f5326be86b650718f232cb7bb748991df29749a72bab83c3c3406a53159b34e",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_9e2125db42259daf67394d8fba94c84cb3fd1a6aa7a8b16bd07b8e1eca71ce44",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_08ca608bfb73181198d6806350b056345210ffdf812124572a4b9cf90a229f07",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_377ca3a6e5c49c18bdedfdccd691cc4fce3a6b96711e57428876d4ac58638c17",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_0814d8a15c00a71279d77de4a6236bb6b6588452f51609ee0a6bac757f197fce",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_32c1814daa39fdf5a7e04c39af3b3fe035f88bc961720232addc2b2eda83b4d4",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_07b1cc6b72ff1aeef85cd79db8973d98c81754767cf3e060e261a7f5cc50c0d1",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_b87475d5009453edc426ae651c40c880c16b0c7abf4b1e7d20e0dfe1dc48ed9f",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_64eaf565a5af562218402d323ccbc07dd5046d9efca0fe0a8dfc68e5f01a8646",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_9d502a68f56d40ea7bf5c2c02d2d601ad59c40501ad3edd1e0a6a5cd90e52374",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_7894609d4e3a75a5689893682c4671d34e092952f771b3a7c155588e297621d3",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_08c4dcf448959f17834acd88e4fef6da8a1ab60b6cff6dbee3fd4cb01c171270",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_66658033169c71cedfd4484da5eb0de91dfc70d85c80f1b25cbd5fd21822ab3d",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_76cd82e840f50c2ae4c16def232870ef8dc988bae7220c69d00ca452912186a0",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_5eb92eebebbd60f1dfc146f96f74aa1ef8847b9e9b6202605d2e65ceca618f2a",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_7eaeaa2ca6af468ed818d9c5bbc12c21dd380d9d3f8e3a1ffa14f46b77e7753a",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_c480c4b339f25c8e6f3aff3141304cf314055beb0abda463281f547736958fd5",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_82b309ae60d7d7e64b900266528215f33e4504b43eca2e8bc86173b7d0635851",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_f7373e9f92d2dcfb55d4d2da0bff4df10b6524b8722aeae7903c476fbff276e0",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_0d5400026f1eb767357f6af3a3d385e74b0dd5ea094a6e8baaf5c6453aacc4c8",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_98a8345681c134e2f7f30c60f91f5c5c57a3766842ce29a510a291b23a6a6dae",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_7c877c772ca84c7ae89443a4e22f6083f643783ba56b4542dd914b39b2090a89",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_293cb31b0f69b1e1d08d565225f90d5881ba2c188d48b3fd11ea6ad2c0e3b04c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_ff5fcca159726a7523b61566e766bf0f7be26e1f779a84c34a58ddad76b2640b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_6f8885b08f767b8dd993918f45be6ecf5682470077337f1624b4227239160334",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_b41563a58f854a0b5c81829a64241436ac18b547e61d4368d729279b944dac24",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_124d73b771172876dcbe59be085348b77d4be72f2319f53b0ceaa48b52be2c8b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_cfccb4061c43727b4c5de15c670da525c1bc6f8f3bda1b759bb6a76c8c0aae52",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_3ef83bc5aa8decbf124779f19d637b2c2f830765325743aeb23ce38c33b90549",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_a16eac70ea9620ac269265b8a7fa6be2398ea79bbfb04d4d447928d383b30b7d",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_9824e2942579a8aa15a98f6930d91af6ae8f0113c83aed4b07f5c31f9cccc899",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_8ffc25d4a50fa99817fe0b774615a54681b22f36984f658a7b607fa066751640",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_4a4d994ea59368055e32733012a7865ccd433050cf91c0d6799205e7374337d3",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_e87375574968ee24c8e25e1ac16de94f81af0a048be8e2677114115eb5c470c3",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_d557b9f5a45ed6b56f91e03624ffcab6821b231aa9b2a2f345a6922c1aa25a3b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_9263486b6356ad2e8a68a6438a6b0bdb9ce91c7e7a4ab175e420f130f0c67878",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_8190b637d427428afc78cb6d1b80f1b80f9edadaa5e21c35699c01074c3f9513",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_b72bfd3dc887eab092103e0048208c58e95d74fe9f620a82057a630930cbfd78",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_777644e320655d15f8fe7c4b691045c87ca9db64664d3bb33d9b8e74bd59dc63",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_9e6032a109d5f5f798deceba178a6d4da32cd5012bbb8cf1e652102540c3d643",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_d4f5b01c6b58243cb0a0a7ce547e81ea10fb665236f3e51481584ffc014a617c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_89157f24cd5fc465ca6b953439f3c8b53828cf2fda3ea369d06ee6164d09d942",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_3aea84f277f901f664fb22a22e996f979e2911660deccb324312bb013907fda2",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_5bac0fe134e5e0282652a332f7f34384e00602e57cd71e373641de4eee033ef1",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_9b050e46a5e0b5217d489d36a50f03aa4755a69b6d58d070a1a5ea802846b40c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_4e1e7dbebaf7008482385b31d1d983f2c96b39e1ad0dcad6cbdbcf965e48a7ba",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_a2a68b629158c1eaba19a51c168d092ed7682ed0ee558b82a36c57fb848c9413",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_3d6fac24ef3a1f14055160bd8ba5277a03b5d6a52041bc91d3a9e2f2531b9a6c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_552f3d298e92cb8dcea7c2a8040ef51dd1c9a8ecfac347a0a1444baf17b1cfaf",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_a4c5f21ea9ed84eeaec50eba26f9bea034c92da5b773572735e8fdb3893d6b2d",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_d10d2f1728cde48bb75f2a1c1fefa4dafcc1bfe73b9d92f6ea40f56c06c51203",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_7463aa09cd55cd12019d7b958d50643d8a9fa3ef1146c3532faafa34deb2a966",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_008",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-008.ts"
+        }
+      },
+      {
+        "findingId": "finding_bcd9da181920098b130824900cd08e5e8c79be903a04c3b50a8cc75db8b8072a",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_38ce6b30522738a666cd4b55ce481fcd5da4adc4228d4ea023b437c23ccaf5a6",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_e272d50d73c33b5b92e6a51f4da37613b93dbb0c3c3263bd530024b2fea08067",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_1c977d766696800701ea62df9900a4f2cb270b30fc80d57ece120691044ee88a",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_7e7f7b7b91588512f4a8a4876f28d67cceaad2d9fc2aab81963654ebbe8e3d4c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_8197fb05b27492f1fcf94d3500951df9f926bd5f6014146d2a0b27d9a4e49b0b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_e9c5ec5bac28e001d2167facf3f0fd63123b93060928f345fd5c45043f7c78e7",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_2e732c942936bb107e0e9b172b03695e4a587613581465b38afb36a051f9c8d4",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_009",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-009.ts"
+        }
+      },
+      {
+        "findingId": "finding_a99ebc0b32c749e75ddb0ce1ffef5326291da94a6cdf50c449953bc10feca41b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_62383be4943d9111dc61deea3bdead6486639d0f5029103cfc39de2349c9c9c7",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_1824c906d02da389df27b6fa9499b657ead57d12a6d9af8f5f06e9466f9f5282",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_3311d0d5276461cf74afd7fc12680eee9eab2884a9fd68d80eaa7c5860f1b39c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_6e4493da0795eb5b40edb14393b440d4bd922f57d23035700e701c1e894fa54c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_a9e1c5ad15853bd09d6e4894103f597b64eaee1f502ebcf4c9608dedd21fd985",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_350ad73565a48dfc51fcd5d75aa1b67c39706c0a6974c1b8930b603f2fa8d301",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_d5b3259ba2b18495b698e6ce5b9d97df66601c2079d5484c4fddeb22f97dac80",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_010",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-010.ts"
+        }
+      },
+      {
+        "findingId": "finding_d2faa77451260990e2b0c778e2e690925f70e812f3d9eed85f980ad04a1f39b0",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_9e69af0e5f48702544e26a1f454e24b59359ec58d95ea0a1a90a5bfe42000ab0",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_3f8ac446ca5e67f7cf5bfdf9843eb9f1229b1d8379c3cc514ba003434afad966",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_6ed9397e4c662ce7b6c20a40ac8b9e9e8f1bf3667e49e64e899138a0a350fe8d",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_97aa2fba4f73c0e99f6c5e6a5bcece93772201755e6541f21e8c9d9336481492",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_61a365d9a837f2770db2070a81c14900ab0208f8bdd507cd3df5127afc8d0aeb",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_55e07182b11b47aaa5b4daac2ce0af931fc398454848f246f21c72f3c286039f",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_9c104e6b64f85de7ad77bce76b2ba1e6311b2bafed7bc912c61873b38199e621",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_011",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-011.ts"
+        }
+      },
+      {
+        "findingId": "finding_df3bdca4780d8dc32139938afbd6fd06ab9c98f766552d7b576a30ff21327d45",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_f4aa8e28f7dc85781ea1be69588fcfb0c1d24b7b2a8eb583491f41cf25bd35ae",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_45dc24b616779815a407b1d9bfec9075a15a34dbd156145a452561c66c0d3ead",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_b821f1cc3a3c4520145509c026a923592a9e50016716bf52f99b640502087281",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_9d2cb43af5622f752d877b82e46ff7e0060441cfadecdb1f34327922e8305050",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_4d6cb29c6bb7009bb824d11a48c18e0e3115f3cf001abf1729c888ea1424b219",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_e7adb37f083c358b31561671db6e87f43e7e7b6f99fce9b0660e50c4864eb28e",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_63aea9200a37fe5986385408d9b64a91bec071900512ac932e2c4e533e6aed82",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_012",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-012.ts"
+        }
+      },
+      {
+        "findingId": "finding_47150243a417c5a0eb067c5f3ab219a618ca625c1f8d0aa6601872d2fefbce9c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_3189494643dd2befa00d2bfd3e1252eedbb14ed6be34f57aaffe1a35aee3751b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_c2e53db60f5150721d3360685e191a8b0e45460d5e394c65ddf707446dcf7006",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_c851f1a94bf94e1510b4e96bacbbf665a4b2aec3e0a85f8422aa87d4e9f25eda",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_f2d2e09903c2f8c9dd8618476dc7d99b4dc5b89018f564803b8b264850ed966e",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_5a0c41b8d509b7dc84d79d0ca7b78407ec926a02cd8fc600d01b92da82ba19b6",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_cf5df1c5df0856ef996699392e84633d92aa9cdcf61edb285a2b1fd840c04185",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_db4eb29afed7fa8c821145d9c34360912126b4bfd985f7e08b14ae508f21e0ac",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_013",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-013.ts"
+        }
+      },
+      {
+        "findingId": "finding_9f8a145606a1fbda1420b1c7a86fce5716720beb64d061e5ae0b58d48abf3109",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_548878fac7c3d0c117b5ab812206d411a35695bb415b55bdef7c182a659ad372",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_120a6864e1dbd49417a6be66948aa0860a8b91737b4f24a4b422d90d79ed5045",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_ac359665e43c2b0d7cdcda8852687e28dd3fd5a79edf883f5de90aae71c4b45c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_dbc0544b02b3d4954cde70cb68f4c789ed239855a2701506dda37d8c7f306b91",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_6a7528a3974b5568bf4bb8b6162ca72aa47c9da2124a9d876c9c2a734adc8459",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_4097949f383dfde9132224809166555fd93132f4ca557d9cfa7d7619b7db868c",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_00cdebb8ba1905940aa0ac86ec4925587b1da6974395207ae90a3a72a4637cfb",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_014",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-014.ts"
+        }
+      },
+      {
+        "findingId": "finding_4e007eceb689b1312498a27b94099cc0a5c8d834a5dc3c7f83a1b6e38eabb3ca",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_d8220f35728f861bca3c9213e282d8b65ea7dcbeabedd9489e42ce7d6da9cd8b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_b75f705f1fdbcaab929c8cb4383f8c2ba8d812a7267c2722a35229071061d90b",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_641d2ff8d299b8ccd626549ad8bf0f08c845f70f2fc31c885e0ff8175aa05c58",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_c0b9f158855c720777a7faef39935b34504a92f87957dac28c78e9a538ce2e0e",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_92b525c71bf296dbd516074179b7160592ff28e4bed6f06074ee3d7927aad89d",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_eef6bc357ba9650fe4eb87f8b7ca9b93471164b330450039ee6df0ff365544c0",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_2fcdd127c2bdb8c5df7ab3ce3eefd8fa167ebeffe11e89ab4d39d1a38004c9ca",
+        "tuple": {
+          "disposition": "ReviewCandidate",
+          "dispositionReason": null,
+          "exportKind": "named-value",
+          "exportName": "dead_authored_dead_015",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/authored-dead/dead-015.ts"
+        }
+      },
+      {
+        "findingId": "finding_c082000292d0b697501684e3e192ce2719250b6586f845eb8613db29b7df35dc",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_e7719d0c1a52b29a5656aa44230681d3d2e51913ac8e306e612f279c93698a09",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_154288f7a38e6fbc370ded1d6acddf1fbcd2a79aa3484a12a8cef724d34c3487",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_a831a9f583e97e900ccc0e4119b786e7b52adf45a4422342a61d267fe6af9cae",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_e81001070ca6860b85543390a3e557ce6dbf3f9dd1d69b539c6e07077726c36e",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_c936e423a453330ceba9acc7e5d09a7aa6179389d6ffe93d98c8fff55519cdca",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_8e60da61c3fe46e3e5ff34b93a852c84dd3c520831de1453e06869235cc7f74f",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_f96d57d16cad72b75e93363e831b9ad7349dda3a299bcf8c5201f189f114b84a",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_3c44797cb9a5e661c03977d64ae8a23dad985b94b12c16aa97836e5bc4df11c9",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_07db6f5d618fb4a343f4785c7e1605ff24b8f48a87892d1c20a2fddbc6e30a4f",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_bd8e0ba32d37c5020b83c9a020fa33648cc5ef70e1de2ffd0d3f6fbf1d66e1ab",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_83329a69c7e84665bcd6849ad205a1fde6a9ea4a4c6dbd67e66a95253cd8ee64",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_14e414aae307ce03387f8e42b8d380d11a4b4e33ae8ed9ec49daa20d08087339",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_38f751a4ee9f3de0456de1fa27583411ceb2e583843976aaab6556c0ddcf5c2d",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_961563ad53949a90857d24b437d85337ee6cd6dc8f54fe8cda9d22efaa44e9c7",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_fc8976dce03c8dc5a2a9e2265f6c867635a852dc0aaf0aba9fb5043768f38ac1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_a0fa202b69bce1f491edf23fd3125f158bf5888e8444123775e5cc3f478a5392",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_1a4d6e140f736fab673e75599c7217f973939abe9ca473d4d9f7de755b94e771",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_5b6a13a8221238ad02d337c5e439727a11133c762b59f6d42bc3fc5305aff3cb",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_a2beb5a2a751231bb2506d6d5853918ade53914e354c40b9a8a3720f6087f721",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_c5b58eb44850da7a64102c0a7523356b83acd2fa489dc5126ca622b84687df6d",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_688ad780ca5ffe912c5a0f26cf07d09289e8e0b98be462064ff42ec5952dc984",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_b410d409f4895fd97dadb0318a4618f706f631a958b01aa82164bc11a232ffe1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_d8ffafb1bd34d06f4a125df28cafbdeb72ece219cde3a26ebe0f94859bed8d6a",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_822b07f9bf1144d7a26cb9d35834e04f41598401558e9db43fc1f7bdfa0a4801",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_37506269eea50f2a4dd488c33f3ddc46a6c612230369fb7249f6e4d76445a360",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_98c5fc041d6fd86d46693b9dcd73d1af56ec34cfd29c9e1d8e14a7deba616006",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_0a5aebb5d0f1a314ac83c5a1a46abd1263b664edbd96491adeee234c9ee6d95d",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_ca8c3a654848cbebb1d6a115dbeb6f525c6659cd6227375f6598136ce2344cf3",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_1f0ae079ab547fba43e06a216b8f9ee0d9c9ce62ab5a7854296b611c3c2fc89e",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_aac23e725863dae63d343f3d6ae7542d0463371434d7fa2e704206487ff18161",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_eae2c521349a58bc0ebdaac9765130867ded5ff2f6eaeb9d4d1c23e637687780",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_e57b4d7bb91e4c79e56e64a61fdd9b0b8bceb0af97c4c8736afa07cdef9507b5",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_67fa6cf31c116267eeabf51fcb0f4c282878300cbf092a9a57e08fe3a93186d8",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_b66f4dbaf4189898238975bded3f11a1d56dc825f3dc8aa9773d458722ed2205",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_f08da96c240ab231e365e2b4283985d508437b41cf6f197404b60ae145dd6c39",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_fe5d5edf7b397644d0587dd3a35f79c871f2383218020c9ca48a010e5ba53cb6",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_5ba84cadfa64c6c513ae94332895b204729312fc842f410b4f6d6349326624ef",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_5dae70d0027cd9c1cfca902f41837aa664877041bcac342dc87cfce6f97747ef",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_211609c497c1c49f12cbbf22dd629eeda9dbc244f9bd0c29ab87506d3380bce6",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_3094b7e0dcdba0e0cff9628f6e541d01f9764f4cb65152b8e42df59665ebc7bc",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_67432259c3c33dd5d2d5a160d95b8d263f9dee41360c256751480e42f20c54ef",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_ee6360cd32a9066144b7925f094a8ec0917b16217527893dcb463f959e12b019",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_a8430c07bd4f5e71e4dcdcbf800ffa956b02c08ef0f430fcc484a441304093b5",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_ad7fc7815f81359d773bb1c84f69c75a7527d5dd9ce81285485c408014fc1a7c",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_b85df5bc84023acedc708dc57bedfdf0e0515872956d7d7e0fb5564fa01874d3",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_05306c273d7f8adc36a194d22bfb818c7096bc85bf1b9cfbef1935ee4ca350f2",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_30068f3a933219096cfdbb84f0ef0c149f75c816154c156703275e94765ae1fa",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_37faced11fc00b467095e845134f3fde0361850c22c50301a009dd689da53af4",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_ab7eb31f171e60a79ee60f9a711afeb04379782b90e5d54616ee6495838711d6",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_0a05b917c8612b64feb6c800337c87c5b2c8195ec7e993c8b0aead877fdf1d51",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_48dba9732cf11a6b13b315a9b05a1789241f098efac987c55c3b56d7d18ac7d8",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_ddd4098831c9719c4aa8ae2c46e924338d1ca615cd7e48a4865d8191d79d1ba1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_f207c6f1ac5f7958869fa7e628bacb5cd1205a722af2cf9531a2af61d076a90b",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_c418dd7a274f9849edbc19848912180e87c38ee80cf1cbf87659d0e2c83e18e1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_66e7c259fd20ec67b3d5c42f6265b733e28aa56517e07bf75bc61738c47550a0",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_821a6aecaea6b49b6366dc46f37fb080922ff049a422179f664afa13ce1083ad",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_f86a8645e1e5f6f698d0f01b09f6010a35fd8b6a00db28ff7e509f7fad2fa4ce",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_fbee351aebde458603bb5b41e227c67f3dde004f46b7e4a10814e10c9f0d4ce0",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_ff956745ad863c4d717f030768c1fc0aac073f69708e554b57f7ad051c311c54",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_32b7b7b6a1e001893008e3ea02542f4a0769026f7ffee4872c9f3839829ab972",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_8c74906a8329e9f78bc2447b376df9ad864179f75cd2e5f4b48471ddcc091afa",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_247297f397bacf19283293eb39073203700633804665e7ee4153adf79032a953",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_37b4043653ffc3cb40904c4bbae116bfbc24f352be4db7e5351aa6af0da05a9e",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "explicit-vendor-role",
+            "classificationVersion": "source-classification.v1",
+            "role": "Vendored"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_vendor_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/vendor/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_853d76789aa390c4f93b137ee5608c1541eea17a501ed97584b070ef10e99b4f",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_9c486e7fb34d9c1ea7d597acfc9bee5a003b96cb69305d61732b517781b229f4",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_9eb17332877809f5a50f339387bc5d9066da8a4d0a180ee3843bf3cf76ad6ea2",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_98674294d49321e9d008eab592b192b0b352813a5bc81c8c8d1ef65b045279ae",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_e785d1aa5932e4d9ce024bcb42e884b9a7d1228f5efd9ade9d9334fbe37a8640",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_74d89814b76395899d2be1ac8e1a81f1a428b0355830c6f1c1e9daae06b7e512",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_1a58c7d47e50e5bbdbfa8bddf7cc5998bf5e07bcbd569fd74e475a5ee89bccf8",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_ae50ef7f36988671ea932572ccaa8232108788506bd03208a061ec3953a8b4d2",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_000",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-000.ts"
+        }
+      },
+      {
+        "findingId": "finding_d428d77e947415f2bca41187861553b733f658fa567023b600fbc67dadc06ee7",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_eab56da9153d154aaab097ad258f7c7cabf9c719021507f370f6aeb99062015a",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_69af890274ac490216e207fcd23e6f252a5322bad6645d9cc6bea893833ade2d",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_6f6772b0a561206a879bca041a1478d73179fe40baecbd753bc2b10e241a4f89",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_dcbfd574faf799db600df076d64a45e3c54520fd939ddebf538931d408bf0cbd",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_cfbedad8f4385094ca12350b6ece26f41d1fa244aff9573afdf57d20ef0fc0da",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_e9f53f60be4afbd1a2d38cc0b706135c92d0f702df29125bcee0efe1baf33918",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_8df9fee378ee6d00a8fe20d0c9724882880a53b403e2069cfb6a674aee6fd2af",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_001",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-001.ts"
+        }
+      },
+      {
+        "findingId": "finding_9b535132a65679d90ec538cdba73afb8ee0f9944946e18c819186b55c330cd97",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_0253d3b689db1bd18e06cbe6690152305bd3dfae29e38eab862c81789ce89088",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_7f0f807cd01542a1ed3ab32a763286fe705d0c2615a16f57da219d3efc6159cc",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_59973b1d56eedcc5a55477bee2f4fd586df5cf03bb4085b984e9b38daa3de464",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_df95068a295e4d9c3c132be00d53bf50c5e8841cc40f3cfb3021aee6bdbbe4f1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_87511f67abf94e174923d7281ef26991460f9b7b32ac141772992e802fb6fb5b",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_7c821fd8179236bca71ca279b669d68c3c332e681110ec81416d7ac030c8bd58",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_af02575c15bce4640c29068de66c16a03ca1c89c2427fb3176b544317cc95599",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_002",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-002.ts"
+        }
+      },
+      {
+        "findingId": "finding_192cae48e93084dddd2f0c787f8173bfc3fa0e3e8e019a214767c412e71b9123",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_4f7330386ec7450af109de5d303b01f5277f03c520822106fe80e2d7963929e0",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_ba3c58f334aac39c63d69fc1b527df4919cd8edce7110a593740b664f32de993",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_674cdb9588cf7bcf0dd08e762e62b28fce082eb7324b076ee4c7da09272b8fac",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_7ac331750be1b269a1fee47de0eea201609daba86c62a9ce6752c2d04f674307",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_97a0ed01e1c13fec47f4cd3a0ac3b707973fde4af1c1c0529551cbdc71a02e11",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_85bc409d67c40bd72c5095d568ca8f5b11b21e950610cb616e339b44b0953047",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_7acc56c505b248caa731dcb436641eb52635639df11d86e2ee7720eb35535ca1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_003",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-003.ts"
+        }
+      },
+      {
+        "findingId": "finding_b95ff3b1e783491979cfe49ec226293385bc0c27c2290aee9797e8e811f778ad",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_a6199512f140f88e01106fd936235fb1de6468dd5d8f09a91258ec0577971311",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_bcccdc79996e35f6eaac054cb6ff545f90fce8ab458b2069147aab8e744440b8",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_8730d04e23f8bb6e66d8bf9b7cc5faf4e41de7118295ce489e0611f5292323b5",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_0d503afc40312c40c6f1817c067284eca9b4a8c5cee6e4c97d56dad15ac5c6ad",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_1137d8869b80e29e189b9836f22ddb1c708233680e5b4d911787615cb2a78907",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_17a888442acd9ae1294eb7ba274bf72ae6dd3f56b926a496ea0b958406bcc936",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_18cb7c6d5d9eeda89003c0b87922921b8816d2093bf95410b0a5b6ea0ebb2402",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_004",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-004.ts"
+        }
+      },
+      {
+        "findingId": "finding_3d9a014a103dac6d631e334b191fc84f017970fd7b0131df818b77b9b0f04730",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_72af26a87788f9505f45a35baa206106f4ce6fd024d828393ee3107ac889c254",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_5f32ea30b36fb8f8aabdf1c5fb74cdd01ca4c1a12130e34ca9402383d5726abf",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_1582dfa848b32ca09c4afcb676a4c56f9a8163bf4e54aad863b6f77e4f423bd1",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_1b7f57318528fa16bae0fa9ab7a7639bd3b67c2670cdfc633012c227361b11fc",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_298992ff6e3925006df49052ba9d4b3a7cd38df5679f591667d29fc75ebe0977",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_67e5601af3e9a4eda72b675225dee02c6e990f4c43b8cc07d2ac362d9aa89836",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_9e0aadbbca286f71553d07fcb36b555beb447a326053ae5c71aad25743a9caad",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_005",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-005.ts"
+        }
+      },
+      {
+        "findingId": "finding_0e20abb9d46f6329b48c3189925784d7af22aee9c4ae63e82dfbea068b074287",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_1518d896982e003a994f884014420be00abe58f37d3b5334cde784d15ef81e32",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_8cadf8134c1b3fd0a8d3c59b29c65fda7a13e96fa6aaaad9f81fb7eb15328531",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_cee2030af0c0c9e6dafe3635018f47e9838d3dd90b6d0d0c798c735e0b9b8cbd",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_08e7a59256fd94f0c785ae789a849f8c9cdd0cbdaf90d09cb4c11e3f4a2c1dfc",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_05d3519441715bd3345122b79ed597d76dff318649c7f4bdf8c0ab68b5a44596",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_bab7c33c4871d37d5bdb09ebbabeb7b6a12ab33bc7e4c17b6f5e3ff3cf3168c8",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_2ab7d1df25d1cddeb6ab84e4b7596d086fd84519bd05f67f46b0f66efa3b7907",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_006",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-006.ts"
+        }
+      },
+      {
+        "findingId": "finding_cb219ef694f1f08cabe9f6e9e3311543691ce8484b4d08c0597fc386d1fbde1a",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-00",
+          "path": "packages/pkg-00/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_7167eb823ce21d4e866ca070c4355dfb23eb21a9bad122229ee41b639240ae16",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-01",
+          "path": "packages/pkg-01/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_765023abac366d599c89ebb2a8a5f8c3d1426433b5b141d893af29a980f212a9",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-02",
+          "path": "packages/pkg-02/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_1415252ce0b011d8bc36fa02f8b019093d603624a93fd11d7b764fbb61e6be20",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-03",
+          "path": "packages/pkg-03/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_b3470a104bd4d7ef85b67646496cd8536092f8920f2a871eb661459e068179ac",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-04",
+          "path": "packages/pkg-04/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_a2419182b196329deaf1c7eb33218ceb903a73bb7b59046893728ae6d788b9aa",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-05",
+          "path": "packages/pkg-05/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_f44c019f6ed949d1649a72b75d26e934f53bfd73dd56a19813f2a7364577bbad",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-06",
+          "path": "packages/pkg-06/src/generated-dead/dead-007.ts"
+        }
+      },
+      {
+        "findingId": "finding_3ff31d8564b120763877cc04c46c3605a62af17d7dea0dcf7a1137b93d8f607d",
+        "tuple": {
+          "disposition": "ReviewOnly",
+          "dispositionReason": {
+            "classificationReason": "leading-comment-@generated-within-first-2KiB",
+            "classificationVersion": "source-classification.v1",
+            "role": "Generated"
+          },
+          "exportKind": "named-value",
+          "exportName": "dead_generated_dead_007",
+          "findingClass": "grounded-zero-fan-in-export",
+          "packageName": "@lumin-scale/pkg-07",
+          "path": "packages/pkg-07/src/generated-dead/dead-007.ts"
+        }
+      }
+    ],
+    "schemaVersion": "phase1-scale-finding-id-map.v1",
+    "sha256": "93b1b99df26f8b7a5872425cc84f0f2dcb36e5af65f53eb37756e32a8532c523"
+  },
+  "status": "FAIL",
+  "summary": {
+    "binaryBytes": 11760576,
+    "binaryMaximumBytes": 12582912,
+    "binarySizeMet": true,
+    "blockingTargetsApplied": true,
+    "medians": {
+      "cold-audit-default": {
+        "medianNanoseconds": 1300867705,
+        "met": true,
+        "targetMaximumMilliseconds": 30000
+      },
+      "cold-pre-write-default": {
+        "medianNanoseconds": 1422526117,
+        "met": true,
+        "targetMaximumMilliseconds": 6000
+      },
+      "post-write-32-files-default": {
+        "medianNanoseconds": 2406338965,
+        "met": true,
+        "targetMaximumMilliseconds": 8000
+      },
+      "post-write-one-file-default": {
+        "medianNanoseconds": 2191911303,
+        "met": true,
+        "targetMaximumMilliseconds": 4000
+      },
+      "warm-audit-default": {
+        "medianNanoseconds": 1220418505,
+        "met": true,
+        "targetMaximumMilliseconds": 8000
+      },
+      "warm-pre-write-default": {
+        "medianNanoseconds": 1344852232,
+        "met": true,
+        "targetMaximumMilliseconds": 4000
+      }
+    },
+    "peakRssBytes": 62029824,
+    "peakRssMaximumBytes": 536870912,
+    "peakRssMet": true,
+    "scaling": {
+      "applicable": true,
+      "defaultJobs": 8,
+      "defaultMedianNanoseconds": 1300867705,
+      "jobs1MedianNanoseconds": 1444527204,
+      "maximumRatio": 0.75,
+      "met": false,
+      "ratio": 0.9005491218149464
+    },
+    "targetMisses": [
+      "default/jobs=1 cold audit ratio 0.9005 exceeds 0.75"
+    ]
+  },
+  "toolchain": {
+    "measurementScript": "tools/xtask/benchmark/measure-process.py",
+    "measurementScriptSha256": "0c062c57f94806d5c3cb56b590465f704e5db0fd7a0085cadae9cd62913cb9e4",
+    "pythonExecutable": "/home/endof/.cache/python-3.13.14/bin/python3.13",
+    "pythonSha256": "1222ec0cbd7e51b14b9e84dc653d240e8f3494066d90d5e040e50bb575636a7f",
+    "pythonVersion": "3.13.14"
+  },
+  "workerStackBytes": 4194304
+}

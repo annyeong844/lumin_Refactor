@@ -667,6 +667,164 @@ fn irrelevant_files_are_filtered_before_identity_capture() -> Result<(), Box<dyn
     Ok(())
 }
 
+#[test]
+fn file_workers_preserve_logical_aliases_and_exclude_reserved_payloads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let initialized = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&initialized, 0);
+    let initial_run = field(&initialized.stdout, "runId")?;
+    fs::write(root.path().join("src/z.ts"), "export const last = 2;\n")?;
+    fs::hard_link(root.path().join("src/lib.ts"), root.path().join("src/a.ts"))?;
+    let state_payload = root
+        .path()
+        .join(".lumin/runs")
+        .join(initial_run)
+        .join("evidence.store");
+    fs::hard_link(&state_payload, root.path().join("src/state-alias.ts"))?;
+
+    let mut first_items = None;
+    for jobs in ["1", "4"] {
+        let audited = run(root.path(), &["audit", "--jobs", jobs])?;
+        assert_status(&audited, 0);
+        let audit: Value = serde_json::from_str(&audited.stdout)?;
+        assert_eq!(audit["findingCount"], 3);
+        assert_eq!(audit["limitationCount"], 0);
+        let run_id = field(&audited.stdout, "runId")?;
+        let findings = run(
+            root.path(),
+            &["findings", "--run", &run_id, "--area", "dead-code"],
+        )?;
+        assert_status(&findings, 0);
+        let findings: Value = serde_json::from_str(&findings.stdout)?;
+        assert_eq!(findings["scopeTotal"], 3);
+        assert_eq!(findings["total"], 3);
+        let items = findings["items"]
+            .as_array()
+            .ok_or("missing finding items")?;
+        let paths = items
+            .iter()
+            .map(|item| item["path"]["display"].as_str())
+            .collect::<Vec<_>>();
+        // ARCH-002 uses repo-path.v1 bytes, including the big-endian component
+        // length: the four-byte a.ts/z.ts components precede six-byte lib.ts.
+        assert_eq!(
+            paths,
+            [Some("src/a.ts"), Some("src/z.ts"), Some("src/lib.ts")]
+        );
+        let ids = items
+            .iter()
+            .map(|item| item["findingId"].as_str().ok_or("missing finding ID"))
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+        assert_eq!(ids.len(), 3);
+        if let Some(first) = &first_items {
+            assert_eq!(
+                items, first,
+                "worker count changed canonical finding evidence"
+            );
+        } else {
+            first_items = Some(items.clone());
+        }
+        let omitted = run(
+            root.path(),
+            &["files", "--run", &run_id, "src/state-alias.ts"],
+        )?;
+        assert_status(&omitted, 0);
+        let omitted: Value = serde_json::from_str(&omitted.stdout)?;
+        assert_eq!(omitted["total"], 0);
+    }
+    #[cfg(unix)]
+    {
+        // An explicit redirect into state is a reserved semantic input, not an
+        // ordinary physical alias that can simply be omitted from source evidence.
+        let previous = run(root.path(), &["overview"])?;
+        assert_status(&previous, 0);
+        let mut expected: Value = serde_json::from_str(&previous.stdout)?;
+        std::os::unix::fs::symlink(&state_payload, root.path().join("src/state-symlink.ts"))?;
+        for (jobs, sequence) in [("1", 4_u64), ("4", 5_u64)] {
+            let rejected = run(root.path(), &["audit", "--jobs", jobs])?;
+            assert_status(&rejected, 1);
+            assert!(rejected.stdout.is_empty());
+            assert!(
+                rejected
+                    .stderr
+                    .contains("semantic input aliases the reserved .lumin namespace")
+            );
+            let latest = run(root.path(), &["overview"])?;
+            assert_status(&latest, 0);
+            // ARCH-002 keeps the completed run while exposing the newer failure.
+            expected["latestAttempt"] = serde_json::json!({
+                "attemptId": format!("attempt_{sequence:016x}"),
+                "sequence": sequence,
+                "status": "failed",
+                "failure": concat!(
+                    "state namespace integrity failure: captured audit redirect changed ",
+                    "before publication (src/state-symlink.ts): semantic input aliases ",
+                    "the reserved .lumin namespace: src/state-symlink.ts"
+                ),
+            });
+            assert_eq!(serde_json::from_str::<Value>(&latest.stdout)?, expected);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn nonregular_configuration_fifo_remains_incomplete() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let root = fixture()?;
+    let manifest = root.path().join("package.json");
+    let created = std::process::Command::new("mkfifo")
+        .arg("--")
+        .arg(&manifest)
+        .status()?;
+    assert!(
+        created.success(),
+        "cannot create the nonregular manifest fixture"
+    );
+    let original = fs::symlink_metadata(&manifest)?;
+    assert!(original.file_type().is_fifo());
+
+    for jobs in ["1", "4"] {
+        let operation_id = format!("nonregular-config-fifo-{jobs}");
+        let arguments = [
+            "pre-write",
+            "--operation-id",
+            &operation_id,
+            "--path",
+            "src/lib.ts",
+            "--dependency-at",
+            "src/lib.ts",
+            "zod",
+            "--jobs",
+            jobs,
+        ];
+        // Explicit dependency intent demands this manifest even though a FIFO is
+        // not an enumerable source/config payload in an ordinary audit.
+        let rejected = run(root.path(), &arguments)?;
+        assert_status(&rejected, 4);
+        let result: Value = serde_json::from_str(&rejected.stdout)?;
+        assert_eq!(result["decision"], "incomplete");
+        let shown = run(root.path(), &["operation", "show", &operation_id])?;
+        assert_status(&shown, 0);
+        let shown: Value = serde_json::from_str(&shown.stdout)?;
+        assert_eq!(shown["status"], "committed");
+        assert_eq!(shown["result"], result);
+        let retry = run(root.path(), &arguments)?;
+        assert_status(&retry, 4);
+        assert_eq!(retry.stdout, rejected.stdout);
+        let retained = fs::symlink_metadata(&manifest)?;
+        assert!(retained.file_type().is_fifo());
+        assert_eq!(
+            (retained.dev(), retained.ino()),
+            (original.dev(), original.ino())
+        );
+    }
+    Ok(())
+}
+
 fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::create_dir(root.path().join("src"))?;

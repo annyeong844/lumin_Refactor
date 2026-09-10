@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 ignore.workspace = true
 lumin-model = { path = "../../foundation/model" }
+rayon.workspace = true
 same-file.workspace = true
 saphyr-parser.workspace = true
 serde.workspace = true

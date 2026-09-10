@@ -27,7 +27,10 @@ use coordination::{
     pre_write_admission_evidence, semantic_read_conflicts, transition_sequences_for_gate,
 };
 pub(crate) use integrity::validate_active_gate_catalog_history;
-use integrity::{read_validated_gate, validate_loaded_gate_catalog, validate_stored_gate_catalog};
+use integrity::{
+    ValidatedGateCatalog, read_validated_gate, validate_loaded_gate_catalog,
+    validate_stored_gate_catalog,
+};
 pub use liveness::OperationSession;
 pub(crate) use liveness::{
     migration_operation_lock_name, validate_migration_liveness_lease,
@@ -451,6 +454,7 @@ impl RepositoryStore {
 
 fn load_operation_for_finish(
     write: &WriteTransaction,
+    catalog: &mut ValidatedGateCatalog,
     operation_id: &OperationId,
     kind: GateOperationKind,
     request_digest: &str,
@@ -458,7 +462,9 @@ fn load_operation_for_finish(
     phase: &str,
 ) -> Result<OperationRecord, StoreError> {
     reject_retention_operation_collision(write, operation_id)?;
-    let operation = read_record::<OperationRecord>(write, OPERATIONS, operation_id.as_str())?
+    let operation = catalog
+        .operations
+        .remove(operation_id.as_str())
         .ok_or_else(|| {
             StoreError::Integrity(format!(
                 "pending {phase} operation disappeared: {}",
@@ -466,7 +472,6 @@ fn load_operation_for_finish(
             ))
         })?;
     validate_operation(&operation, kind, request_digest, gate_id)?;
-    validate_stored_validation_receipt(write, &operation)?;
     Ok(operation)
 }
 
@@ -496,6 +501,7 @@ fn reject_retention_operation_collision(
 
 fn validate_pre_write_context(
     write: &WriteTransaction,
+    catalog: &ValidatedGateCatalog,
     operation: &OperationRecord,
     baseline: Option<&GateBaselineDraft>,
     leased_write_set: &[WriteLease],
@@ -533,7 +539,7 @@ fn validate_pre_write_context(
         let interrupted_paths = semantic_conflict_paths(signals);
         signals.retain(|signal| !matches!(signal, GateSignal::SemanticInputConflict { .. }));
         let conflicts = semantic_read_conflicts(
-            write,
+            catalog,
             &operation.operation_id,
             &operation.gate_id,
             attempted_semantic_inputs,
@@ -577,7 +583,7 @@ fn validate_pre_write_context(
         baseline.protected_semantic_inputs.as_slice()
     });
     let (paths, gate_ids) = conflicts(
-        write,
+        catalog,
         &operation.operation_id,
         leased_write_set,
         semantic_inputs,
@@ -684,11 +690,13 @@ fn completed_pre_write_records(
 }
 
 fn load_active_gate_for_post_write(
-    write: &WriteTransaction,
+    catalog: &mut ValidatedGateCatalog,
     gate_id: &GateId,
     operation: &OperationRecord,
 ) -> Result<GateRecord, StoreError> {
-    let gate = read_validated_gate(write, gate_id)?
+    let gate = catalog
+        .gates
+        .remove(gate_id.as_str())
         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
     if gate.lifecycle != GateLifecycle::Active {
         return Err(StoreError::GateNotActive(gate_id.as_str().to_owned()));
@@ -703,10 +711,12 @@ fn load_active_gate_for_post_write(
 }
 
 fn load_active_gate_for_retry(
-    write: &WriteTransaction,
+    catalog: &mut ValidatedGateCatalog,
     gate_id: &GateId,
 ) -> Result<GateRecord, StoreError> {
-    let gate = read_validated_gate(write, gate_id)?
+    let gate = catalog
+        .gates
+        .remove(gate_id.as_str())
         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
     if gate.lifecycle != GateLifecycle::Active {
         return Err(StoreError::GateNotActive(gate_id.as_str().to_owned()));
@@ -736,8 +746,32 @@ fn ensure_post_write_revision_available(
     Ok(())
 }
 
+fn ensure_post_write_revision_available_in_catalog(
+    catalog: &ValidatedGateCatalog,
+    own_operation_id: &OperationId,
+    gate: &GateRecord,
+) -> Result<(), StoreError> {
+    for operation in catalog.operations.values() {
+        if operation.operation_id != *own_operation_id
+            && operation.status == GateOperationStatus::Pending
+            && operation.kind == GateOperationKind::PostWrite
+            && operation.gate_id == gate.gate_id
+            && operation.target_revision == gate.current_revision
+        {
+            return Err(StoreError::GateRevisionBusy(format!(
+                "{}@{}",
+                gate.gate_id.as_str(),
+                gate.current_revision
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_post_write_context(
     write: &WriteTransaction,
+    catalog: &ValidatedGateCatalog,
     gate: &GateRecord,
     operation: &OperationRecord,
     changed_paths: &[RepoPathProjection],
@@ -751,13 +785,13 @@ fn validate_post_write_context(
         signals.push(GateSignal::TransitionCatalogChanged);
     }
     let expected_sequences =
-        transition_sequences_for_gate(write, gate, operation.transition_sequence)?;
+        transition_sequences_for_gate(catalog, gate, operation.transition_sequence)?;
     if expected_sequences != reconciled_transition_sequences
         && !signals.contains(&GateSignal::TransitionCatalogChanged)
     {
         signals.push(GateSignal::TransitionCatalogChanged);
     }
-    if let Some(conflicts) = active_write_conflicts(write, &gate.gate_id, changed_paths)? {
+    if let Some(conflicts) = active_write_conflicts(catalog, &gate.gate_id, changed_paths)? {
         signals.push(GateSignal::ActiveTransitionPending {
             paths: conflicts.paths,
             gate_ids: conflicts.gate_ids,
@@ -771,7 +805,7 @@ fn validate_post_write_context(
         let interrupted_paths = semantic_conflict_paths(signals);
         signals.retain(|signal| !matches!(signal, GateSignal::SemanticInputConflict { .. }));
         let conflicts = semantic_read_conflicts(
-            write,
+            catalog,
             &operation.operation_id,
             &gate.gate_id,
             attempted_semantic_inputs,
@@ -789,7 +823,7 @@ fn validate_post_write_context(
     }
     if !operation.semantic_read_reservation_bindings.is_empty() {
         let conflicts = semantic_read_conflicts(
-            write,
+            catalog,
             &operation.operation_id,
             &gate.gate_id,
             &operation.semantic_read_reservation_bindings,
@@ -845,6 +879,7 @@ struct AuthorizedTransitionInput<'a> {
 
 fn publish_authorized_transition(
     write: &WriteTransaction,
+    other_gates: &mut std::collections::BTreeMap<String, GateRecord>,
     gate: &mut GateRecord,
     input: AuthorizedTransitionInput<'_>,
 ) -> Result<(), StoreError> {
@@ -880,7 +915,6 @@ fn publish_authorized_transition(
             ));
         }
     };
-    integrity::validate_stored_gate_catalog(write)?;
     let sequence = next_transition_sequence(write)?;
     let gate_id = gate.gate_id.clone();
     let transition = WorktreeTransition {
@@ -897,7 +931,7 @@ fn publish_authorized_transition(
         },
     };
     write_record(write, TRANSITIONS, &transition_key(sequence), &transition)?;
-    attach_transition_references(write, &gate_id, sequence)?;
+    attach_transition_references(write, other_gates, &gate_id, sequence)?;
     gate.lifecycle = GateLifecycle::Closed;
     gate.transition_refs.clear();
     gate.alias_closures = alias_closures.to_vec();
