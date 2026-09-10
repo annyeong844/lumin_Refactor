@@ -227,8 +227,16 @@ fn finalize_under_guard(
     .map_err(|error| publication_error("publish latest pointer", error))?;
     store_phase_end!(profile, FinalizeLatest);
     store_phase_begin!(profile, FinalizeRelease);
-    liveness::release_session(store, guard, session)
-        .map_err(|error| publication_error("release attempt lease", error))?;
+    boundary_context!(profile, FinalizeRelease, |boundary| {
+        liveness::release_session_profiled(
+            store,
+            guard,
+            session,
+            #[cfg(feature = "audit-boundary-test-profile")]
+            boundary,
+        )
+    })
+    .map_err(|error| publication_error("release attempt lease", error))?;
     store_phase_end!(profile, FinalizeRelease);
     Ok(PublishedRun {
         attempt_id: record.attempt_id,

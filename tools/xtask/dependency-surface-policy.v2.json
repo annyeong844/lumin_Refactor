@@ -7,6 +7,7 @@
       "class": "production",
       "path": "crates/application/cli",
       "features": {
+        "audit-boundary-test-profile": ["audit-lifecycle-test-profile","lumin-engine/audit-boundary-test-profile","lumin-model/audit-boundary-test-profile","lumin-protocol/audit-boundary-test-profile"],
         "audit-execution-profile-probe": [],
         "audit-lifecycle-test-profile": ["audit-store-test-profile", "lumin-engine/audit-lifecycle-test-profile", "lumin-model/audit-lifecycle-test-profile", "lumin-protocol/audit-lifecycle-test-profile"],
         "audit-store-test-profile": ["audit-execution-test-profile", "lumin-engine/audit-store-test-profile", "lumin-model/audit-store-test-profile", "lumin-protocol/audit-store-test-profile"],
@@ -255,6 +256,7 @@
       "class": "production",
       "path": "crates/application/engine",
       "features": {
+        "audit-boundary-test-profile": ["audit-lifecycle-test-profile","lumin-model/audit-boundary-test-profile","lumin-store/audit-boundary-test-profile"],
         "audit-lifecycle-test-profile": ["audit-store-test-profile", "lumin-model/audit-lifecycle-test-profile", "lumin-store/audit-lifecycle-test-profile"],
         "audit-store-test-profile": ["audit-execution-test-profile", "lumin-model/audit-store-test-profile", "lumin-store/audit-store-test-profile"],
         "audit-execution-test-profile": ["lumin-model/audit-execution-test-profile"],
@@ -907,7 +909,8 @@
       "name": "lumin-model",
       "class": "production",
       "path": "crates/foundation/model",
-      "features": {"audit-execution-test-profile": [], "audit-store-test-profile": ["audit-execution-test-profile"], "audit-lifecycle-test-profile": ["audit-store-test-profile"]},
+      "features": {
+        "audit-boundary-test-profile": ["audit-lifecycle-test-profile"],"audit-execution-test-profile": [], "audit-store-test-profile": ["audit-execution-test-profile"], "audit-lifecycle-test-profile": ["audit-store-test-profile"]},
       "dependencies": [
         {
           "origin": "workspace-inherited",
@@ -970,6 +973,7 @@
       "class": "production",
       "path": "crates/application/protocol",
       "features": {
+        "audit-boundary-test-profile": ["audit-lifecycle-test-profile","lumin-model/audit-boundary-test-profile"],
         "audit-lifecycle-test-profile": ["audit-store-test-profile", "lumin-model/audit-lifecycle-test-profile"],
         "audit-store-test-profile": ["audit-execution-test-profile", "lumin-model/audit-store-test-profile"],
         "audit-execution-test-profile": ["lumin-model/audit-execution-test-profile"],
@@ -1189,6 +1193,7 @@
       "class": "production",
       "path": "crates/application/store",
       "features": {
+        "audit-boundary-test-profile": ["audit-lifecycle-test-profile","lumin-model/audit-boundary-test-profile"],
         "audit-lifecycle-test-profile": ["audit-store-test-profile", "lumin-model/audit-lifecycle-test-profile"],
         "audit-store-test-profile": ["lumin-model/audit-store-test-profile"],
         "cache-cleanup-test-fault": [],
@@ -1461,7 +1466,7 @@
           "requirement": null,
           "optional": false,
           "defaultFeatures": true,
-          "features": ["audit-lifecycle-test-profile"],
+          "features": ["audit-boundary-test-profile"],
           "sourceKind": "workspace",
           "resolution": {
             "kind": "workspace",

@@ -23,3 +23,6 @@ pub use root::*;
 pub mod audit_lifecycle_diagnostic;
 #[cfg(feature = "audit-store-test-profile")]
 pub mod audit_store_diagnostic;
+
+#[cfg(feature = "audit-boundary-test-profile")]
+pub mod audit_boundary_diagnostic;

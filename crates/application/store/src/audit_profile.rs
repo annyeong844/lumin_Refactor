@@ -35,6 +35,11 @@ macro_rules! store_profile_lock {
                     $admission,
                     $profile.as_deref_mut(),
                     (AuditStorePhase::$enter, AuditStorePhase::$exit),
+                    #[cfg(feature = "audit-boundary-test-profile")]
+                    (
+                        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext::$enter,
+                        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext::$exit,
+                    ),
                     operation,
                 )
             } else {
@@ -108,6 +113,16 @@ mod recorder {
             >,
         ) {
             self.timings.lifecycle.record(self.root, row);
+        }
+        #[cfg(feature = "audit-boundary-test-profile")]
+        pub(crate) fn record_boundary(
+            &mut self,
+            row: Result<
+                lumin_model::audit_boundary_diagnostic::AuditBoundaryContextObservation,
+                String,
+            >,
+        ) {
+            self.timings.boundary.record(self.root, row);
         }
         fn with_clock(root: AuditStorePhase, clock: C) -> Self {
             let mut timings = AuditStoreTimings::default();

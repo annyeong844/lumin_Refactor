@@ -1,4 +1,4 @@
-//! Versioned W2/W3/W7 cold-only comparison; never a performance-budget verdict.
+//! Versioned W2/W3/W7/W9 cold-only comparison; never a performance-budget verdict.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ pub(super) enum Version {
     Execution,
     Store,
     Lifecycle,
+    Boundary,
 }
 
 impl Version {
@@ -22,6 +23,7 @@ impl Version {
             Self::Execution => "audit-execution-test-profile",
             Self::Store => "audit-store-test-profile",
             Self::Lifecycle => "audit-lifecycle-test-profile",
+            Self::Boundary => "audit-boundary-test-profile",
         }
     }
     fn report_schema(self) -> &'static str {
@@ -29,6 +31,7 @@ impl Version {
             Self::Execution => "lumin.phase1-cold-audit-diagnostic.v1",
             Self::Store => "lumin.phase1-cold-audit-diagnostic.v2",
             Self::Lifecycle => "lumin.phase1-cold-audit-diagnostic.v3",
+            Self::Boundary => "lumin.phase1-cold-audit-diagnostic.v4",
         }
     }
 }
@@ -429,7 +432,7 @@ fn expected_feature_closure(version: Version) -> Value {
         "lumin-protocol":["audit-execution-test-profile","audit-store-test-profile"],
         "lumin-store":["audit-store-test-profile"],
     });
-    if version == Version::Lifecycle {
+    if matches!(version, Version::Lifecycle | Version::Boundary) {
         for owner in [
             "lumin-cli",
             "lumin-engine",
@@ -446,6 +449,9 @@ fn expected_feature_closure(version: Version) -> Value {
                     "audit-lifecycle-test-profile",
                 ]
             };
+            if version == Version::Boundary {
+                features.push("audit-boundary-test-profile");
+            }
             features.sort_unstable();
             closure[owner] = serde_json::json!(features);
         }
@@ -529,6 +535,9 @@ fn validate_versioned_frame(
         Version::Store => {
             serde_json::to_value(validate_store_frame(bytes, observer, stdout, build, jobs)?)
         }
+        Version::Boundary => serde_json::to_value(validate_boundary_frame(
+            bytes, observer, stdout, build, jobs,
+        )?),
         Version::Lifecycle => serde_json::to_value(validate_lifecycle_frame(
             bytes, observer, stdout, build, jobs,
         )?),
@@ -575,6 +584,13 @@ fn validate_lifecycle_frame(
     if frame.store_phases.iter().any(|phase| phase.calls != 1) {
         return Err("fresh cold repository omitted store/bootstrap work".to_owned());
     }
+    validate_lifecycle_counts(&frame)?;
+    Ok(frame)
+}
+
+fn validate_lifecycle_counts(
+    frame: &lumin_protocol::audit_lifecycle_diagnostic::AuditLifecycleDiagnosticDto,
+) -> Result<(), String> {
     // W8's reviewed empty-index amendment to W7's authored fresh-fixture oracle.
     // The variable validation leaves are checked by the strict DTO decoder.
     let costs = [
@@ -615,7 +631,57 @@ fn validate_lifecycle_frame(
             }
         }
     }
+    Ok(())
+}
+
+fn validate_boundary_frame(
+    bytes: &[u8],
+    observer: &Value,
+    stdout: &Value,
+    build: &str,
+    jobs: Option<usize>,
+) -> Result<lumin_protocol::audit_boundary_diagnostic::AuditBoundaryDiagnosticDto, String> {
+    let frame = lumin_protocol::audit_boundary_diagnostic::decode(bytes)?;
+    validate_frame_binding(
+        &frame.lifecycle().store().execution(),
+        observer,
+        stdout,
+        build,
+        jobs,
+    )?;
+    if frame.store_phases.iter().any(|phase| phase.calls != 1) {
+        return Err("fresh cold repository omitted store/bootstrap work".to_owned());
+    }
+    validate_lifecycle_counts(&frame.lifecycle())?;
+    validate_boundary_counts(&frame)?;
     Ok(frame)
+}
+fn validate_boundary_counts(
+    frame: &lumin_protocol::audit_boundary_diagnostic::AuditBoundaryDiagnosticDto,
+) -> Result<(), String> {
+    // Exact W9 source-owned vector. Variable validation counts were checked by decoding.
+    let expected = [
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 2, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+        [1, 3, 3, 1, 1, 2, 2, 0, 1, 2, 0, 0, 0, 0, 0, 3, 1, 1, 1],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+    ];
+    for (context, expected) in frame.store_boundary_contexts.iter().zip(expected) {
+        for (index, (cost, expected)) in context.costs.iter().zip(expected).enumerate() {
+            if index != 0 && index != 3 && cost.calls != expected {
+                return Err(format!(
+                    "fresh boundary count mismatch: {} / {}",
+                    context.context, cost.cost
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_frame_binding(
@@ -738,3 +804,6 @@ mod store_tests;
 
 #[cfg(test)]
 mod lifecycle_tests;
+
+#[cfg(test)]
+mod boundary_tests;

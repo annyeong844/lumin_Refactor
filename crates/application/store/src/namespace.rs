@@ -439,6 +439,10 @@ impl NamespaceState {
             lumin_model::audit_store_diagnostic::AuditStorePhase,
             lumin_model::audit_store_diagnostic::AuditStorePhase,
         ),
+        #[cfg(feature = "audit-boundary-test-profile")] boundaries: (
+            lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+            lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+        ),
         operation: impl FnOnce(
             &NamespaceGuard,
             Option<&mut crate::audit_profile::StoreProfiler>,
@@ -453,7 +457,11 @@ impl NamespaceState {
             },
             None::<fn() -> Result<(), StoreError>>,
             profile,
-            Some(phases),
+            Some(LockProfilePhases {
+                store: phases,
+                #[cfg(feature = "audit-boundary-test-profile")]
+                boundaries,
+            }),
             operation,
         )
     }
@@ -466,10 +474,7 @@ impl NamespaceState {
         #[cfg(feature = "audit-store-test-profile")] mut profile: Option<
             &mut crate::audit_profile::StoreProfiler,
         >,
-        #[cfg(feature = "audit-store-test-profile")] phases: Option<(
-            lumin_model::audit_store_diagnostic::AuditStorePhase,
-            lumin_model::audit_store_diagnostic::AuditStorePhase,
-        )>,
+        #[cfg(feature = "audit-store-test-profile")] phase_observations: Option<LockProfilePhases>,
         #[cfg(not(feature = "audit-store-test-profile"))] operation: impl FnOnce(
             &NamespaceGuard,
         ) -> Result<
@@ -485,18 +490,33 @@ impl NamespaceState {
     where
         C: FnOnce() -> Result<(), StoreError>,
     {
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let boundaries = phase_observations.as_ref().map(|phases| phases.boundaries);
+        #[cfg(feature = "audit-store-test-profile")]
+        let phases = phase_observations.map(|phases| phases.store);
         #[cfg(feature = "audit-store-test-profile")]
         if let (Some(profile), Some((enter, _))) = (profile.as_deref_mut(), phases) {
             profile.begin(enter);
         }
-        let lock = self.open_prevalidated_lock()?;
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary_recorder = profile.as_ref().and_then(|_| {
+            boundaries
+                .map(|(enter, _)| crate::audit_lifecycle_profile::BoundaryProfiler::new(enter))
+        });
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary = boundary_recorder.as_mut();
+        let lock = boundary_cost!(boundary, GuardPrevalidation, self.open_prevalidated_lock())?;
         if exclusive {
             match on_contention {
                 Some(on_contention) => match lock.file().try_lock_exclusive() {
                     Ok(()) => {}
                     Err(error) if lock_contended(&error) => {
                         on_contention()?;
-                        FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+                        boundary_cost!(
+                            boundary,
+                            LifecycleLockAcquire,
+                            FileExt::lock_exclusive(lock.file()).map_err(io_error)
+                        )?;
                     }
                     Err(error) => return Err(io_error(error)),
                 },
@@ -504,18 +524,43 @@ impl NamespaceState {
                     #[cfg(feature = "namespace-test-crash")]
                     barrier::lock_exclusive_for_namespace_test(lock.file())?;
                     #[cfg(not(feature = "namespace-test-crash"))]
-                    FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+                    boundary_cost!(
+                        boundary,
+                        LifecycleLockAcquire,
+                        FileExt::lock_exclusive(lock.file()).map_err(io_error)
+                    )?;
                 }
             }
         } else {
-            FileExt::lock_shared(lock.file()).map_err(io_error)?;
+            boundary_cost!(
+                boundary,
+                LifecycleLockAcquire,
+                FileExt::lock_shared(lock.file()).map_err(io_error)
+            )?;
         }
-        let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
+        let guard = boundary_cost!(
+            boundary,
+            GuardConstruction,
+            NamespaceGuard::acquire_without_store(self.clone(), lock)
+        )?;
         let admission = match purpose {
-            LockPurpose::Ordinary => migration::require_idle(&guard)
-                .and_then(|()| guard.validate_complete_at_namespace_test_boundary()),
-            LockPurpose::Admission => migration::admit_ordinary(&guard)
-                .and_then(|()| guard.validate_complete_at_namespace_test_boundary()),
+            LockPurpose::Ordinary => migration::require_idle(&guard).and_then(|()| {
+                guard.validate_complete_at_namespace_test_boundary_profiled(
+                    #[cfg(feature = "audit-boundary-test-profile")]
+                    boundary.as_deref_mut(),
+                )
+            }),
+            LockPurpose::Admission => migration::admit_ordinary_profiled(
+                &guard,
+                #[cfg(feature = "audit-boundary-test-profile")]
+                boundary.as_deref_mut(),
+            )
+            .and_then(|()| {
+                guard.validate_complete_at_namespace_test_boundary_profiled(
+                    #[cfg(feature = "audit-boundary-test-profile")]
+                    boundary,
+                )
+            }),
             LockPurpose::Migration => Ok(()),
             #[cfg(any(
                 test,
@@ -528,6 +573,10 @@ impl NamespaceState {
             }
         };
         let admitted = admission.is_ok();
+        #[cfg(feature = "audit-boundary-test-profile")]
+        if let (Some(profile), Some(recorder)) = (profile.as_deref_mut(), boundary_recorder) {
+            profile.record_boundary(recorder.finish());
+        }
         #[cfg(feature = "audit-store-test-profile")]
         if let (Some(profile), Some((enter, _))) = (profile.as_deref_mut(), phases) {
             profile.end(enter);
@@ -543,30 +592,49 @@ impl NamespaceState {
         if let (Some(profile), Some((_, exit))) = (profile.as_deref_mut(), phases) {
             profile.begin(exit);
         }
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary_recorder = profile.as_ref().and_then(|_| {
+            boundaries.map(|(_, exit)| crate::audit_lifecycle_profile::BoundaryProfiler::new(exit))
+        });
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut boundary = boundary_recorder.as_mut();
         let result = result.and_then(|value| guard.require_backend_access().map(|()| value));
-        let final_validation =
-            if !admitted || guard.backend_access_rejected.load(Ordering::SeqCst) {
-                // A refused schema or rejected original store must not be reopened by redb in
-                // writable mode. Even opening/closing changes private backend recovery metadata.
-                guard.validate_bound_entries()
-            } else {
-                match purpose {
-                    LockPurpose::Ordinary | LockPurpose::Admission => {
-                        migration::require_idle(&guard).and_then(|()| guard.validate_complete())
-                    }
-                    LockPurpose::Migration => guard.validate_bound_entries(),
-                    #[cfg(any(
-                        test,
-                        feature = "logical-store-snapshot-test",
-                        feature = "namespace-test-crash",
-                        feature = "retention-test-crash"
-                    ))]
-                    LockPurpose::Observation => migration::require_idle(&guard)
-                        .and_then(|()| guard.validate_bound_entries()),
+        let final_validation = if !admitted || guard.backend_access_rejected.load(Ordering::SeqCst)
+        {
+            // A refused schema or rejected original store must not be reopened by redb in
+            // writable mode. Even opening/closing changes private backend recovery metadata.
+            guard.validate_bound_entries()
+        } else {
+            match purpose {
+                LockPurpose::Ordinary | LockPurpose::Admission => migration::require_idle(&guard)
+                    .and_then(|()| {
+                        guard.validate_complete_profiled(
+                            #[cfg(feature = "audit-boundary-test-profile")]
+                            boundary.as_deref_mut(),
+                        )
+                    }),
+                LockPurpose::Migration => guard.validate_bound_entries(),
+                #[cfg(any(
+                    test,
+                    feature = "logical-store-snapshot-test",
+                    feature = "namespace-test-crash",
+                    feature = "retention-test-crash"
+                ))]
+                LockPurpose::Observation => {
+                    migration::require_idle(&guard).and_then(|()| guard.validate_bound_entries())
                 }
-            };
-        let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
+            }
+        };
+        let unlock = boundary_cost!(
+            boundary,
+            LifecycleLockRelease,
+            FileExt::unlock(guard.lock.file()).map_err(io_error)
+        );
         let result = combine_lock_results(result, final_validation, unlock);
+        #[cfg(feature = "audit-boundary-test-profile")]
+        if let (Some(profile), Some(recorder)) = (profile.as_deref_mut(), boundary_recorder) {
+            profile.record_boundary(recorder.finish());
+        }
         #[cfg(feature = "audit-store-test-profile")]
         if let (Some(profile), Some((_, exit))) = (profile, phases) {
             profile.end(exit);
@@ -648,6 +716,21 @@ impl NamespaceState {
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
     }
+}
+
+// The W9 subdivisions travel with their containing W3 phases, without retaining
+// an observer or any product resource on this diagnostic-only descriptor.
+#[cfg(feature = "audit-store-test-profile")]
+struct LockProfilePhases {
+    store: (
+        lumin_model::audit_store_diagnostic::AuditStorePhase,
+        lumin_model::audit_store_diagnostic::AuditStorePhase,
+    ),
+    #[cfg(feature = "audit-boundary-test-profile")]
+    boundaries: (
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+    ),
 }
 
 #[derive(Clone, Copy)]
@@ -952,13 +1035,52 @@ impl NamespaceGuard {
     }
 
     fn validate_complete(&self) -> Result<(), StoreError> {
-        let database = self.open_database()?;
-        drop(database);
+        self.validate_complete_profiled(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            None,
+        )
+    }
+
+    fn validate_complete_profiled(
+        &self,
+        #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut observer = profile
+            .as_deref_mut()
+            .map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+        let database = self.open_database_observed(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            observer.as_mut(),
+            #[cfg(all(
+                feature = "audit-lifecycle-test-profile",
+                not(feature = "audit-boundary-test-profile")
+            ))]
+            None,
+        )?;
+        boundary_cost!(profile, DatabaseExplicitDrop, drop(database));
         Ok(())
     }
 
     fn validate_complete_at_namespace_test_boundary(&self) -> Result<(), StoreError> {
-        self.validate_complete()?;
+        self.validate_complete_at_namespace_test_boundary_profiled(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            None,
+        )
+    }
+
+    fn validate_complete_at_namespace_test_boundary_profiled(
+        &self,
+        #[cfg(feature = "audit-boundary-test-profile")] profile: Option<
+            &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+        >,
+    ) -> Result<(), StoreError> {
+        self.validate_complete_profiled(
+            #[cfg(feature = "audit-boundary-test-profile")]
+            profile,
+        )?;
         #[cfg(feature = "namespace-test-crash")]
         {
             barrier::wait_after_complete_validation()?;

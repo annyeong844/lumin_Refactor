@@ -25,21 +25,20 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34241768722)
-on head `4f03cc1f8a25e83265a81c0fb1b2c604ce6ee8bf` / merge checkout
-`5c13e1e5faad50cff9ed37d9243cc80723e221fc` passes 55 of 58 jobs, including
-both lint/build paths and staged binary/adapter behavior. Both platforms
-complete all 34 benchmark cells with valid semantic truth and process
-observations. Windows scaling misses at `0.9609594999583402`, native Linux at
-`0.8562792222437678`, against `0.75`; their other numeric targets pass. Both
-package benchmarks and dependent Required remain failed. All 745 Windows,
-711 Linux and 379 diagnostic capture files match their complete manifests;
-every median, count vector and semantic-map identity was independently
-rechecked. The [W7 hosted packet](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md#lint-correction-hosted-verification)
-retains exact job/build/artifact hashes and full verification bindings. Its
-separate diagnostic is not budget authority. Different hosted machines and
-sample variance prevent causal comparisons with the retained
-[W6 hosted packet](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md).
+The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34344138195)
+on head `12004f39127208740518d64b13c11e43b8652a34` / merge checkout
+`c373b27b5ee8f6fba5551b5fab319a4778e68643` passes 56 of 58 jobs, including
+native Linux and both staged binary/adapter probes. Windows scaling misses at
+`0.8953551885800882` against `0.75`; Linux passes at `0.7051724995962835`.
+Every other numeric budget passes. Only Windows Benchmark packaged binary and
+dependent Required fail. All 745 Windows, 711 Linux and 379 diagnostic capture
+files match their complete manifests; every median, count vector and full
+256-entry semantic map was rechecked. The [W8 hosted packet](probes/phase1-empty-latest-read-2026-09-09/CI-EVIDENCE.md)
+retains the exact identities, verification bindings and remaining measurement
+gaps. No rerun or merge was performed. Its separate diagnostic is not budget
+authority. Different hosted machines and sample variance prevent causal
+comparisons with the retained [W7](probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md#lint-correction-hosted-verification)
+or [W6 hosted packet](probes/phase1-attempt-session-read-2026-09-08/CI-EVIDENCE.md).
 The [initial W5 packet](probes/phase1-latest-index-noop-2026-09-07/CI-EVIDENCE.md)
 retains its independent numeric misses and then-failing test routing.
 The [earlier W4 packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
@@ -177,7 +176,7 @@ lifetimes or claiming raw flush/lock-wait attribution. It establishes no hosted
 performance PASS or optimization authority. W6 grants no broader optimization, worker-policy
 change, or budget amendment.
 
-The active scoped candidate is
+The preceding bounded implementation is
 [W8 empty latest-index read-through](probes/phase1-empty-latest-read-2026-09-09/DESIGN.md).
 It proposes removing only the redundant second backend/write/abort when one
 exclusive call has proven canonical latest absent and the entire pointer table
@@ -196,6 +195,31 @@ read-only substitution remain excluded. P1-60/P1-70 stay open. The separate
 [publication approval](probes/phase1-empty-latest-read-2026-09-09/REVIEW.md#publication-approval)
 permits committing/pushing W8 and checking one resulting public CI run while
 PR #135 remains Draft; it grants no broader optimization or merge authority.
+That [authorized hosted run](probes/phase1-empty-latest-read-2026-09-09/CI-EVIDENCE.md)
+is now complete, retaining the Windows scaling miss above.
+
+The active owner-frozen instrumentation packet is
+[W9 guard and attempt-release observation](probes/phase1-guard-release-diagnostic-2026-09-09/DESIGN.md).
+It selects eight existing guard entry/exit intervals and final attempt release,
+which W7 does not decompose. Native admission's two memory-backed verification
+calls remain opaque and distinct from writable file-backend construction/drop.
+It changes no product behavior, resource lifetime or numeric budget and makes
+no whole-store or speedup claim. Its
+[author and independent scoped design reviews](probes/phase1-guard-release-diagnostic-2026-09-09/REVIEW.md)
+pass for the exact candidate. The owner approved exact freeze, scoped
+instrumentation and local verification on 2026-09-10. The
+[implementation record](probes/phase1-guard-release-diagnostic-2026-09-09/IMPLEMENTATION.md)
+records completed scoped local verification: both platforms' ordinary/W9
+releases, actual v1/v2/v3/v4 release children, staged packages/adapters, scoped
+owner tests, separated Clippy, xtask, launcher and structural checks, plus final
+format, documents and source/artifact binding. It distinguishes retained
+initial-source Windows feature-off/fault evidence from final-r2-source Linux
+tests. Independent scoped source review also passes. New Cargo commands remain
+gated on host memory headroom. The owner subsequently approved publication and
+one hosted CI run with the frozen W7-to-W9 diagnostic substitutions, preserving
+the ordinary benchmark and Required outcome. No hosted or numerical acceptance
+follows from the local verification; reruns and further changes require separate
+approval.
 
 ## Proposed WSL `/mnt` disposition
 

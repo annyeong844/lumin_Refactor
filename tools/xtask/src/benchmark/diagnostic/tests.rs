@@ -142,6 +142,7 @@ pub(super) fn scripted_frames(version: Version) -> Result<(), String> {
         Version::Execution => canonical(frame())?,
         Version::Store => super::store_tests::canonical(super::store_tests::value())?,
         Version::Lifecycle => super::lifecycle_tests::canonical(super::lifecycle_tests::value())?,
+        Version::Boundary => super::boundary_tests::canonical(super::boundary_tests::value())?,
     })
     .map_err(|error| error.to_string())?;
     let payload_before = hash_file(&python)?;

@@ -36,6 +36,8 @@ pub enum DiagnosticVersion {
     // The older two external-binary partitions intentionally never select W7.
     #[allow(dead_code)]
     Lifecycle,
+    #[allow(dead_code)]
+    Boundary,
 }
 impl From<bool> for DiagnosticVersion {
     fn from(store: bool) -> Self {
@@ -83,14 +85,21 @@ pub fn actual_release_children_report_concrete_pool_and_unchanged_semantics(
                         DiagnosticVersion::Execution => "lumin.audit-execution-diagnostic.v1",
                         DiagnosticVersion::Store => "lumin.audit-execution-diagnostic.v2",
                         DiagnosticVersion::Lifecycle => "lumin.audit-execution-diagnostic.v3",
+                        DiagnosticVersion::Boundary => "lumin.audit-execution-diagnostic.v4",
                     }
                 );
                 if store {
                     verify_store_frame(&frame, true)?;
                 }
-                if version == DiagnosticVersion::Lifecycle {
+                if matches!(
+                    version,
+                    DiagnosticVersion::Lifecycle | DiagnosticVersion::Boundary
+                ) {
                     verify_lifecycle_frame(&frame, LifecycleFixture::Fresh)?;
-                    verify_lifecycle_bytes(&frame, &output.stderr)?;
+                    verify_lifecycle_bytes(&frame, &output.stderr, version)?;
+                    if version == DiagnosticVersion::Boundary {
+                        verify_boundary_frame(&frame)?;
+                    }
                     verify_final_lifecycle_state(root.path(), 1)?;
                 }
                 assert_eq!(frame["processId"], process_id);
@@ -158,15 +167,21 @@ pub fn actual_release_children_report_concrete_pool_and_unchanged_semantics(
                 );
                 let frame = serde_json::from_slice(&existing.stderr)?;
                 verify_store_frame(&frame, false)?;
-                if version == DiagnosticVersion::Lifecycle {
+                if matches!(
+                    version,
+                    DiagnosticVersion::Lifecycle | DiagnosticVersion::Boundary
+                ) {
                     verify_lifecycle_frame(&frame, LifecycleFixture::Seeded)?;
-                    verify_lifecycle_bytes(&frame, &existing.stderr)?;
+                    verify_lifecycle_bytes(&frame, &existing.stderr, version)?;
+                    if version == DiagnosticVersion::Boundary {
+                        verify_boundary_frame(&frame)?;
+                    }
                     assert_eq!(frame["processId"], existing_pid);
                     let result: Value = serde_json::from_slice(&existing.stdout)?;
                     assert_eq!(frame["attemptId"], result["attemptId"]);
                     assert_eq!(frame["runId"], result["runId"]);
                     verify_final_lifecycle_state(root.path(), 2)?;
-                    lifecycle_pending_recovery(jobs)?;
+                    lifecycle_pending_recovery(jobs, version)?;
                 }
             }
         }
@@ -273,7 +288,102 @@ fn verify_lifecycle_frame(
     Ok(())
 }
 
-fn lifecycle_pending_recovery(jobs: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+fn verify_boundary_frame(frame: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    let contexts = [
+        "open-recovery-enter",
+        "open-recovery-exit",
+        "attempt-enter",
+        "attempt-exit",
+        "publish-prepare-enter",
+        "publish-prepare-exit",
+        "publish-finalize-enter",
+        "finalize-release",
+        "publish-finalize-exit",
+    ];
+    let costs = [
+        "namespace-validation",
+        "store-handle-open",
+        "backend-open",
+        "store-validation",
+        "read-admission",
+        "write-admission",
+        "backend-commit",
+        "backend-abort",
+        "database-explicit-drop",
+        "database-return-tail",
+        "guard-prevalidation",
+        "lifecycle-lock-acquire",
+        "guard-construction",
+        "lifecycle-lock-release",
+        "native-store-verification",
+        "attempt-lock-validation",
+        "attempt-lock-drop",
+        "attempt-lock-remove",
+        "directory-sync",
+    ];
+    let expected = [
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 2, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+        [1, 3, 3, 1, 1, 2, 2, 0, 1, 2, 0, 0, 0, 0, 0, 3, 1, 1, 1],
+        [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+    ];
+    let rows = frame["storeBoundaryContexts"]
+        .as_array()
+        .ok_or("boundary contexts")?;
+    assert_eq!(rows.len(), 9);
+    let mut total = [0_u64; 7];
+    for ((row, name), expected) in rows.iter().zip(contexts).zip(expected) {
+        assert_eq!(row.as_object().ok_or("boundary row")?.len(), 5);
+        assert_eq!(row["context"], name);
+        assert_eq!(row["calls"], 1);
+        let leaves = row["costs"].as_array().ok_or("boundary costs")?;
+        assert_eq!(leaves.len(), 19);
+        let mut sum = 0_u64;
+        for (index, ((cost, name), count)) in leaves.iter().zip(costs).zip(expected).enumerate() {
+            assert_eq!(cost.as_object().ok_or("boundary cost")?.len(), 3);
+            assert_eq!(cost["cost"], name);
+            let calls = cost["calls"].as_u64().ok_or("boundary calls")?;
+            if index == 0 || index == 3 {
+                assert!(calls > 0);
+            } else {
+                assert_eq!(calls, count, "{} / {name}", row["context"]);
+            }
+            assert_eq!(cost["elapsedNanoseconds"].is_null(), calls == 0);
+            if calls > 0 {
+                sum = sum
+                    .checked_add(cost["elapsedNanoseconds"].as_u64().ok_or("boundary time")?)
+                    .ok_or("cost overflow")?;
+            }
+        }
+        for (target, index) in total.iter_mut().zip([2, 4, 5, 6, 7, 8, 9]) {
+            *target += leaves[index]["calls"].as_u64().ok_or("balance count")?;
+        }
+        let elapsed = row["elapsedNanoseconds"]
+            .as_u64()
+            .ok_or("boundary elapsed")?;
+        assert_eq!(row["selfNanoseconds"].as_u64(), elapsed.checked_sub(sum));
+        let enclosing = frame["storePhases"]
+            .as_array()
+            .ok_or("store phases")?
+            .iter()
+            .find(|phase| phase["phase"] == name)
+            .and_then(|phase| phase["elapsedNanoseconds"].as_u64())
+            .ok_or("boundary parent time")?;
+        assert!(elapsed <= enclosing, "{name}");
+    }
+    assert_eq!(total, [11, 1, 2, 2, 0, 9, 2]);
+    Ok(())
+}
+
+fn lifecycle_pending_recovery(
+    jobs: Option<&str>,
+    version: DiagnosticVersion,
+) -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let control = command("LUMIN_AUDIT_CONTROL_BINARY", root.path())?
         .args(["capabilities"])
@@ -343,7 +453,10 @@ fn lifecycle_pending_recovery(jobs: Option<&str>) -> Result<(), Box<dyn std::err
     let frame: Value = serde_json::from_slice(&output.stderr)?;
     verify_store_frame(&frame, false)?;
     verify_lifecycle_frame(&frame, LifecycleFixture::Pending)?;
-    verify_lifecycle_bytes(&frame, &output.stderr)?;
+    verify_lifecycle_bytes(&frame, &output.stderr, version)?;
+    if version == DiagnosticVersion::Boundary {
+        verify_boundary_frame(&frame)?;
+    }
     assert_eq!(frame["processId"], pid);
     assert_eq!(frame["buildId"], control["scope"]["buildId"]);
     let result: Value = serde_json::from_slice(&output.stdout)?;
@@ -422,7 +535,11 @@ fn verify_final_lifecycle_state(
     Ok(())
 }
 
-fn verify_lifecycle_bytes(frame: &Value, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+fn verify_lifecycle_bytes(
+    frame: &Value,
+    bytes: &[u8],
+    version: DiagnosticVersion,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Authored transport field order. Value parsing alone would accept duplicate
     // keys, reordering and extra transport whitespace.
     fn object(
@@ -460,51 +577,57 @@ fn verify_lifecycle_bytes(frame: &Value, bytes: &[u8]) -> Result<(), Box<dyn std
             .collect::<Result<Vec<_>, _>>()?;
         children.push((field, format!("[{}]", rows.join(","))));
     }
-    let contexts = frame["lifecycleContexts"]
-        .as_array()
-        .ok_or("contexts")?
-        .iter()
-        .map(|row| {
-            let costs = row["costs"]
-                .as_array()
-                .ok_or("costs")?
-                .iter()
-                .map(|cost| object(cost, &["cost", "calls", "elapsedNanoseconds"], &[]))
-                .collect::<Result<Vec<_>, _>>()?;
-            object(
-                row,
-                &[
-                    "context",
-                    "calls",
-                    "elapsedNanoseconds",
-                    "selfNanoseconds",
-                    "costs",
-                ],
-                &[("costs", format!("[{}]", costs.join(",")))],
-            )
-        })
-        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-    children.push(("lifecycleContexts", format!("[{}]", contexts.join(","))));
-    let canonical = object(
-        frame,
-        &[
-            "schemaVersion",
-            "diagnosticOnly",
-            "buildId",
-            "processId",
-            "attemptId",
-            "runId",
-            "requestedJobs",
-            "observedAvailableParallelism",
-            "parallelismObservationError",
-            "actualJobs",
-            "configuredWorkerStackBytes",
-            "phases",
-            "storePhases",
-            "lifecycleContexts",
-        ],
-        &children,
-    )?;
+    let mut context_fields = vec!["lifecycleContexts"];
+    if version == DiagnosticVersion::Boundary {
+        context_fields.push("storeBoundaryContexts");
+    }
+    for field in context_fields {
+        let contexts = frame[field]
+            .as_array()
+            .ok_or("contexts")?
+            .iter()
+            .map(|row| {
+                let costs = row["costs"]
+                    .as_array()
+                    .ok_or("costs")?
+                    .iter()
+                    .map(|cost| object(cost, &["cost", "calls", "elapsedNanoseconds"], &[]))
+                    .collect::<Result<Vec<_>, _>>()?;
+                object(
+                    row,
+                    &[
+                        "context",
+                        "calls",
+                        "elapsedNanoseconds",
+                        "selfNanoseconds",
+                        "costs",
+                    ],
+                    &[("costs", format!("[{}]", costs.join(",")))],
+                )
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        children.push((field, format!("[{}]", contexts.join(","))));
+    }
+    let mut keys = vec![
+        "schemaVersion",
+        "diagnosticOnly",
+        "buildId",
+        "processId",
+        "attemptId",
+        "runId",
+        "requestedJobs",
+        "observedAvailableParallelism",
+        "parallelismObservationError",
+        "actualJobs",
+        "configuredWorkerStackBytes",
+        "phases",
+        "storePhases",
+        "lifecycleContexts",
+    ];
+    if version == DiagnosticVersion::Boundary {
+        keys.push("storeBoundaryContexts");
+    }
+    let canonical = object(frame, &keys, &children)?;
     assert_eq!(bytes, format!("{canonical}\n").as_bytes());
     Ok(())
 }
@@ -550,7 +673,7 @@ pub fn diagnostic_transport_failure_preserves_exactly_one_committed_run()
             1
         );
     }
-    Ok(())
+    verify_final_lifecycle_state(root.path(), 1)
 }
 
 pub fn original_audit_failure_has_no_completed_diagnostic_frame()
@@ -564,6 +687,18 @@ pub fn original_audit_failure_has_no_completed_diagnostic_frame()
     assert!(output.stderr.starts_with(b"lumin: "));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("lumin.audit-execution-diagnostic"));
     assert!(!root.path().join(".lumin").exists());
+    // A real store-admission failure, not only malformed arguments, must also
+    // preserve its owned failure and the foreign object without a diagnostic.
+    let state = root.path().join(".lumin");
+    fs::write(&state, b"foreign namespace")?;
+    let output = command("LUMIN_AUDIT_DIAGNOSTIC_BINARY", root.path())?
+        .args(["audit", "--jobs", "1"])
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.starts_with(b"lumin: "));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("lumin.audit-execution-diagnostic"));
+    assert_eq!(fs::read(&state)?, b"foreign namespace");
     Ok(())
 }
 

@@ -43,6 +43,8 @@ macro_rules! lifecycle_context {
     }};
 }
 
+#[cfg(feature = "audit-boundary-test-profile")]
+pub(crate) use recorder::BoundaryProfiler;
 #[cfg(feature = "audit-lifecycle-test-profile")]
 pub(crate) use recorder::LifecycleProfiler;
 
@@ -54,23 +56,88 @@ mod recorder {
         AuditLifecycleCostObservation,
     };
 
-    pub(crate) struct LifecycleProfiler<C = MonotonicClock> {
+    pub(crate) type LifecycleProfiler<C = MonotonicClock> =
+        ContextProfiler<AuditLifecycleContextObservation, C>;
+    #[cfg(feature = "audit-boundary-test-profile")]
+    pub(crate) type BoundaryProfiler<C = MonotonicClock> =
+        ContextProfiler<lumin_model::audit_boundary_diagnostic::AuditBoundaryContextObservation, C>;
+
+    pub(crate) trait ProfileRow: Sized {
+        type Context;
+        type Cost: Copy + Eq;
+        fn empty(context: Self::Context) -> Self;
+        fn cost_mut(&mut self, cost: Self::Cost) -> (&mut u64, &mut Option<u64>);
+        fn complete(self, elapsed: u64) -> Result<Self, String>;
+    }
+    macro_rules! profile_row {
+        ($row:ty, $context:ty, $cost:ty, $observation:path) => {
+            impl ProfileRow for $row {
+                type Context = $context;
+                type Cost = $cost;
+                fn empty(context: Self::Context) -> Self {
+                    use $observation as CostObservation;
+                    Self {
+                        context,
+                        calls: 1,
+                        elapsed_nanoseconds: 0,
+                        self_nanoseconds: 0,
+                        costs: <$cost>::ALL.map(|cost| CostObservation {
+                            cost,
+                            calls: 0,
+                            elapsed_nanoseconds: None,
+                        }),
+                    }
+                }
+                fn cost_mut(&mut self, cost: Self::Cost) -> (&mut u64, &mut Option<u64>) {
+                    let row = &mut self.costs[cost as usize];
+                    (&mut row.calls, &mut row.elapsed_nanoseconds)
+                }
+                fn complete(mut self, elapsed: u64) -> Result<Self, String> {
+                    self.elapsed_nanoseconds = elapsed;
+                    let sum = self.costs.iter().try_fold(0_u64, |sum, row| {
+                        sum.checked_add(row.elapsed_nanoseconds.unwrap_or(0))
+                            .ok_or("lifecycle cost sum overflow")
+                    })?;
+                    self.self_nanoseconds = elapsed
+                        .checked_sub(sum)
+                        .ok_or("lifecycle costs exceed context")?;
+                    self.validate()?;
+                    Ok(self)
+                }
+            }
+        };
+    }
+    profile_row!(
+        AuditLifecycleContextObservation,
+        AuditLifecycleContext,
+        AuditLifecycleCost,
+        AuditLifecycleCostObservation
+    );
+    #[cfg(feature = "audit-boundary-test-profile")]
+    profile_row!(
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryContextObservation,
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryContext,
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryCost,
+        lumin_model::audit_boundary_diagnostic::AuditBoundaryCostObservation
+    );
+
+    pub(crate) struct ContextProfiler<R: ProfileRow, C = MonotonicClock> {
         clock: C,
         start: u128,
         last: u128,
-        active: Option<(AuditLifecycleCost, u128)>,
-        row: AuditLifecycleContextObservation,
+        active: Option<(R::Cost, u128)>,
+        row: R,
         error: Option<String>,
     }
 
-    impl LifecycleProfiler {
-        pub(crate) fn new(context: AuditLifecycleContext) -> Self {
+    impl<R: ProfileRow> ContextProfiler<R> {
+        pub(crate) fn new(context: R::Context) -> Self {
             Self::with_clock(context, MonotonicClock::new())
         }
     }
 
-    impl<C: Clock> LifecycleProfiler<C> {
-        fn with_clock(context: AuditLifecycleContext, clock: C) -> Self {
+    impl<R: ProfileRow, C: Clock> ContextProfiler<R, C> {
+        fn with_clock(context: R::Context, clock: C) -> Self {
             let start = clock.now();
             Self {
                 clock,
@@ -78,21 +145,11 @@ mod recorder {
                 last: start,
                 active: None,
                 error: None,
-                row: AuditLifecycleContextObservation {
-                    context,
-                    calls: 1,
-                    elapsed_nanoseconds: 0,
-                    self_nanoseconds: 0,
-                    costs: AuditLifecycleCost::ALL.map(|cost| AuditLifecycleCostObservation {
-                        cost,
-                        calls: 0,
-                        elapsed_nanoseconds: None,
-                    }),
-                },
+                row: R::empty(context),
             }
         }
 
-        fn invalidate(&mut self, reason: &str) {
+        pub(crate) fn invalidate(&mut self, reason: &str) {
             if self.error.is_none() {
                 self.error = Some(reason.to_owned());
             }
@@ -107,7 +164,7 @@ mod recorder {
             now
         }
 
-        pub(crate) fn begin(&mut self, cost: AuditLifecycleCost) {
+        pub(crate) fn begin(&mut self, cost: R::Cost) {
             let now = self.now();
             if self.active.is_some() {
                 self.invalidate("overlapping lifecycle costs");
@@ -116,7 +173,7 @@ mod recorder {
             }
         }
 
-        pub(crate) fn end(&mut self, cost: AuditLifecycleCost) {
+        pub(crate) fn end(&mut self, cost: R::Cost) {
             let now = self.now();
             let Some((opened, start)) = self.active.take() else {
                 self.invalidate("unopened lifecycle cost");
@@ -126,26 +183,26 @@ mod recorder {
                 self.invalidate("out-of-order lifecycle cost");
                 return;
             }
-            let row = &mut self.row.costs[cost as usize];
+            let (calls, elapsed_nanoseconds) = self.row.cost_mut(cost);
             let next = now
                 .checked_sub(start)
                 .and_then(|elapsed| u64::try_from(elapsed).ok())
                 .and_then(|elapsed| {
                     Some((
-                        row.calls.checked_add(1)?,
-                        row.elapsed_nanoseconds.unwrap_or(0).checked_add(elapsed)?,
+                        calls.checked_add(1)?,
+                        elapsed_nanoseconds.unwrap_or(0).checked_add(elapsed)?,
                     ))
                 });
             match next {
-                Some((calls, elapsed)) => {
-                    row.calls = calls;
-                    row.elapsed_nanoseconds = Some(elapsed);
+                Some((count, elapsed)) => {
+                    *calls = count;
+                    *elapsed_nanoseconds = Some(elapsed);
                 }
                 None => self.invalidate("lifecycle cost overflow"),
             }
         }
 
-        pub(crate) fn finish(mut self) -> Result<AuditLifecycleContextObservation, String> {
+        pub(crate) fn finish(mut self) -> Result<R, String> {
             let end = self.now();
             if self.active.is_some() {
                 self.invalidate("unclosed lifecycle cost or return tail");
@@ -153,21 +210,11 @@ mod recorder {
             if let Some(error) = self.error {
                 return Err(error);
             }
-            self.row.elapsed_nanoseconds = end
+            let elapsed = end
                 .checked_sub(self.start)
                 .and_then(|elapsed| u64::try_from(elapsed).ok())
                 .ok_or("lifecycle context overflow")?;
-            let sum = self.row.costs.iter().try_fold(0_u64, |sum, row| {
-                sum.checked_add(row.elapsed_nanoseconds.unwrap_or(0))
-                    .ok_or("lifecycle cost sum overflow")
-            })?;
-            self.row.self_nanoseconds = self
-                .row
-                .elapsed_nanoseconds
-                .checked_sub(sum)
-                .ok_or("lifecycle costs exceed context")?;
-            self.row.validate()?;
-            Ok(self.row)
+            self.row.complete(elapsed)
         }
     }
 
@@ -400,6 +447,109 @@ mod recorder {
             assert_eq!(result, Err("preconstruction error"));
             assert_eq!(*events.borrow(), ["database", "entry"]);
             assert!(recorder.finish().is_err());
+        }
+
+        #[cfg(feature = "audit-boundary-test-profile")]
+        #[test]
+        fn audit_boundary_shared_recorder_counts_absence_and_residual() -> Result<(), String> {
+            use lumin_model::audit_boundary_diagnostic::{
+                AuditBoundaryContext as Context, AuditBoundaryCost as Cost,
+            };
+            let counts: [[u64; 19]; 9] = [
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 2, 0, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+                [1, 3, 3, 1, 1, 2, 2, 0, 1, 2, 0, 0, 0, 0, 0, 3, 1, 1, 1],
+                [1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            ];
+            for (context, expected) in Context::ALL.into_iter().zip(counts) {
+                let clock = TestClock(Cell::new(0));
+                let mut recorder = BoundaryProfiler::with_clock(context, &clock);
+                for (cost, calls) in Cost::ALL.into_iter().zip(expected) {
+                    for _ in 0..calls {
+                        clock.0.set(clock.0.get() + 1);
+                        recorder.begin(cost);
+                        clock.0.set(clock.0.get() + 1);
+                        recorder.end(cost);
+                    }
+                }
+                clock.0.set(clock.0.get() + 7);
+                let row = recorder.finish()?;
+                let count: u64 = expected.into_iter().sum();
+                assert_eq!(row.costs.map(|row| row.calls), expected);
+                assert_eq!(row.elapsed_nanoseconds, count * 2 + 7);
+                assert_eq!(row.self_nanoseconds, count + 7);
+                for cost in row.costs {
+                    assert_eq!(
+                        cost.elapsed_nanoseconds,
+                        (cost.calls > 0).then_some(cost.calls)
+                    );
+                }
+            }
+            Ok(())
+        }
+        #[cfg(feature = "audit-boundary-test-profile")]
+        #[test]
+        fn audit_boundary_invalid_observation_never_skips_product_cleanup() {
+            use lumin_model::audit_boundary_diagnostic::{
+                AuditBoundaryContext as Context, AuditBoundaryCost as Cost,
+            };
+            for failure in 0..8 {
+                let clock = TestClock(Cell::new(10));
+                let events = RefCell::new(Vec::new());
+                let mut recorder = BoundaryProfiler::with_clock(Context::FinalizeRelease, &clock);
+                match failure {
+                    0 => {
+                        recorder.begin(Cost::BackendOpen);
+                        recorder.begin(Cost::StoreValidation);
+                    }
+                    1 => recorder.end(Cost::BackendOpen),
+                    2 => {
+                        recorder.begin(Cost::BackendOpen);
+                        recorder.end(Cost::StoreValidation);
+                    }
+                    3 => {
+                        recorder.begin(Cost::BackendOpen);
+                        clock.0.set(0);
+                        recorder.end(Cost::BackendOpen);
+                    }
+                    4 => {
+                        recorder.begin(Cost::BackendOpen);
+                        clock.0.set(u128::MAX);
+                        recorder.end(Cost::BackendOpen);
+                    }
+                    5 => recorder.begin(Cost::DatabaseReturnTail),
+                    6 => {
+                        recorder.row.costs[Cost::BackendOpen as usize].calls = u64::MAX;
+                        recorder.begin(Cost::BackendOpen);
+                        recorder.end(Cost::BackendOpen);
+                    }
+                    _ => {
+                        recorder.row.costs[Cost::BackendOpen as usize].elapsed_nanoseconds =
+                            Some(u64::MAX);
+                        recorder.begin(Cost::BackendOpen);
+                        clock.0.set(11);
+                        recorder.end(Cost::BackendOpen);
+                    }
+                }
+                let mut profile = Some(&mut recorder);
+                let result: Result<(), &str> = boundary_cost!(profile, DirectorySync, {
+                    let _cleanup = Canary {
+                        name: "cleanup",
+                        events: &events,
+                        clock: &clock,
+                    };
+                    events.borrow_mut().push("product");
+                    Err("original product failure")
+                });
+                assert_eq!(result, Err("original product failure"));
+                assert_eq!(*events.borrow(), ["product", "cleanup"]);
+                assert!(recorder.finish().is_err());
+            }
         }
     }
 }

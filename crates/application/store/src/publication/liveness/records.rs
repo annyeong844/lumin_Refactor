@@ -154,6 +154,21 @@ pub(super) fn mark_releasing(
     guard: &NamespaceGuard,
     expected: &AttemptLeaseRecord,
 ) -> Result<AttemptLeaseRecord, StoreError> {
+    mark_releasing_profiled(
+        guard,
+        expected,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn mark_releasing_profiled(
+    guard: &NamespaceGuard,
+    expected: &AttemptLeaseRecord,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+) -> Result<AttemptLeaseRecord, StoreError> {
     if expected.state != AttemptLeaseState::Active {
         return Err(StoreError::Integrity(format!(
             "attempt lease is not active: {}",
@@ -164,8 +179,20 @@ pub(super) fn mark_releasing(
     releasing.state = AttemptLeaseState::Releasing;
     // Live sessions are generation-fenced before this transition. Recovery must
     // clear an old-generation lease from the current canonical store.
-    let database = guard.open_database()?;
-    let write = database.begin_write()?;
+    #[cfg(feature = "audit-boundary-test-profile")]
+    let mut observer = profile
+        .as_deref_mut()
+        .map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+    let database = guard.open_database_observed(
+        #[cfg(feature = "audit-boundary-test-profile")]
+        observer.as_mut(),
+        #[cfg(all(
+            feature = "audit-lifecycle-test-profile",
+            not(feature = "audit-boundary-test-profile")
+        ))]
+        None,
+    )?;
+    let write = boundary_cost!(profile, WriteAdmission, database.begin_write())?;
     {
         let mut table = write.open_table(ATTEMPT_LEASES).map_err(backend_error)?;
         let current = table
@@ -189,8 +216,14 @@ pub(super) fn mark_releasing(
             .insert(releasing.attempt_id.as_str(), bytes.as_slice())
             .map_err(backend_error)?;
     }
-    guard.commit(write)?;
-    Ok(releasing)
+    #[cfg(feature = "audit-boundary-test-profile")]
+    let result = guard.commit_boundary(write, profile.as_deref_mut());
+    #[cfg(not(feature = "audit-boundary-test-profile"))]
+    let result = guard.commit(write);
+    result?;
+    let result = Ok(releasing);
+    boundary_begin!(profile, DatabaseReturnTail);
+    result
 }
 
 pub(super) fn read_profiled(
@@ -216,15 +249,20 @@ pub(super) fn read_profiled(
     result
 }
 
-pub(super) fn read_session(
+pub(super) fn read_session_profiled(
     guard: &NamespaceGuard,
     generation: StoreGeneration,
     attempt_id: &AttemptId,
+    #[cfg(feature = "audit-boundary-test-profile")] profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
 ) -> Result<AttemptLeaseRecord, StoreError> {
-    read_session_with_hooks(
+    read_session_with_hooks_profiled(
         guard,
         generation,
         attempt_id,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile,
         |_database| {
             #[cfg(feature = "namespace-test-crash")]
             crate::namespace::barrier::wait_after_attempt_session_open(_database)?;
@@ -238,6 +276,7 @@ pub(super) fn read_session(
     )
 }
 
+#[cfg(test)]
 pub(super) fn read_session_with_hooks(
     guard: &NamespaceGuard,
     generation: StoreGeneration,
@@ -245,7 +284,40 @@ pub(super) fn read_session_with_hooks(
     after_open: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
     before_return: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
 ) -> Result<AttemptLeaseRecord, StoreError> {
-    let database = match guard.open_database_for_generation(generation) {
+    read_session_with_hooks_profiled(
+        guard,
+        generation,
+        attempt_id,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+        after_open,
+        before_return,
+    )
+}
+fn read_session_with_hooks_profiled(
+    guard: &NamespaceGuard,
+    generation: StoreGeneration,
+    attempt_id: &AttemptId,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+    after_open: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
+    before_return: impl FnOnce(&StoreDatabase<'_>) -> Result<(), StoreError>,
+) -> Result<AttemptLeaseRecord, StoreError> {
+    #[cfg(feature = "audit-boundary-test-profile")]
+    let mut observer = profile
+        .as_deref_mut()
+        .map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+    let database = match guard.open_database_for_generation_observed(
+        generation,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        observer.as_mut(),
+        #[cfg(all(
+            feature = "audit-lifecycle-test-profile",
+            not(feature = "audit-boundary-test-profile")
+        ))]
+        None,
+    ) {
         Ok(database) => database,
         Err(error) => {
             guard.reject_backend_access();
@@ -256,36 +328,59 @@ pub(super) fn read_session_with_hooks(
     // No row transaction or borrowed backend value escapes the retained result.
     let result = (|| {
         after_open(&database)?;
-        read_lease(&database, attempt_id)?.ok_or_else(|| {
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let mut observer = profile
+            .as_deref_mut()
+            .map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+        let read = read_lease_observed(
+            &database,
+            attempt_id,
+            #[cfg(feature = "audit-boundary-test-profile")]
+            observer.as_mut(),
+            #[cfg(all(
+                feature = "audit-lifecycle-test-profile",
+                not(feature = "audit-boundary-test-profile")
+            ))]
+            None,
+        )?;
+        read.ok_or_else(|| {
             StoreError::Integrity(format!(
                 "attempt process-liveness lease is missing: {}",
                 attempt_id.as_str()
             ))
         })
     })();
+    #[cfg(feature = "audit-boundary-test-profile")]
+    let validation = database
+        .finish_attempt_session_read_profiled(|| before_return(&database), profile.as_deref_mut());
+    #[cfg(not(feature = "audit-boundary-test-profile"))]
     let validation = database.finish_attempt_session_read(|| before_return(&database));
-    drop(database);
+    boundary_cost!(profile, DatabaseExplicitDrop, drop(database));
     validation?;
     result
-}
-
-fn read_lease(
-    database: &StoreDatabase<'_>,
-    attempt_id: &AttemptId,
-) -> Result<Option<AttemptLeaseRecord>, StoreError> {
-    read_lease_profiled(
-        database,
-        attempt_id,
-        #[cfg(feature = "audit-lifecycle-test-profile")]
-        None,
-    )
 }
 
 fn read_lease_profiled(
     database: &StoreDatabase<'_>,
     attempt_id: &AttemptId,
-    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+    #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
         &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+    >,
+) -> Result<Option<AttemptLeaseRecord>, StoreError> {
+    #[cfg(feature = "audit-lifecycle-test-profile")]
+    let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Lifecycle);
+    read_lease_observed(
+        database,
+        attempt_id,
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        observer.as_mut(),
+    )
+}
+fn read_lease_observed(
+    database: &StoreDatabase<'_>,
+    attempt_id: &AttemptId,
+    #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        &mut crate::audit_boundary_profile::DatabaseObserver<'_>,
     >,
 ) -> Result<Option<AttemptLeaseRecord>, StoreError> {
     let read = lifecycle_cost!(profile, ReadAdmission, database.begin_read())?;
@@ -560,8 +655,35 @@ pub(super) fn remove(
     guard: &NamespaceGuard,
     expected: &AttemptLeaseRecord,
 ) -> Result<(), StoreError> {
-    let database = guard.open_database()?;
-    let write = database.begin_write()?;
+    remove_profiled(
+        guard,
+        expected,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+    )
+}
+
+pub(super) fn remove_profiled(
+    guard: &NamespaceGuard,
+    expected: &AttemptLeaseRecord,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+) -> Result<(), StoreError> {
+    #[cfg(feature = "audit-boundary-test-profile")]
+    let mut observer = profile
+        .as_deref_mut()
+        .map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+    let database = guard.open_database_observed(
+        #[cfg(feature = "audit-boundary-test-profile")]
+        observer.as_mut(),
+        #[cfg(all(
+            feature = "audit-lifecycle-test-profile",
+            not(feature = "audit-boundary-test-profile")
+        ))]
+        None,
+    )?;
+    let write = boundary_cost!(profile, WriteAdmission, database.begin_write())?;
     {
         let mut table = write.open_table(ATTEMPT_LEASES).map_err(backend_error)?;
         let current = table
@@ -584,7 +706,14 @@ pub(super) fn remove(
             .remove(expected.attempt_id.as_str())
             .map_err(backend_error)?;
     }
-    guard.commit(write)
+    #[cfg(feature = "audit-boundary-test-profile")]
+    let result = guard.commit_boundary(write, profile.as_deref_mut());
+    #[cfg(not(feature = "audit-boundary-test-profile"))]
+    let result = guard.commit(write);
+    if result.is_ok() {
+        boundary_begin!(profile, DatabaseReturnTail);
+    }
+    result
 }
 
 pub(super) fn validate_lock(

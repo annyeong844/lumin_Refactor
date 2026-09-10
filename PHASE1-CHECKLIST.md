@@ -170,30 +170,34 @@ checkout.
 Owner route: SLICE-001 Sections 12 and 14, AC 16.
 
 Current review: [REVIEW-005](reviews/phase1-performance-evidence-review-2026-09-05.md).
-The latest [W7 hosted packet](reviews/probes/phase1-lifecycle-boundary-diagnostic-2026-09-08/CI-EVIDENCE.md#lint-correction-hosted-verification)
-has verified process/semantic observations and passing actual package/adapter
-behavior on both platforms. Windows scaling misses at `0.9609594999583402` and
-native Linux at `0.8562792222437678`, both against `0.75`. The run passes 55 of
-58 jobs: the callback correction now passes both hosted lint jobs, while both
-package benchmarks and dependent Required fail. All 1,835 raw captures verify;
-integrity is not numeric PASS. The authorized fourteen-cell diagnostic is
-complete and narrows selected backend construction/release costs without
-changing resource lifetimes. The active scoped candidate is
-[W8 empty latest-index read-through](reviews/probes/phase1-empty-latest-read-2026-09-09/DESIGN.md),
-with exact owner freeze and independent scoped implementation-source PASS.
-Its [local verification](reviews/probes/phase1-empty-latest-read-2026-09-09/IMPLEMENTATION.md)
-has passing core checks on both platforms and all six affected Windows corpus
-row/mode combinations. Actual packages, adapters and external release-child
-diagnostic checks pass on both platforms. The four fresh ordinary
-[local comparison packets](reviews/probes/phase1-empty-latest-read-2026-09-09/MEASUREMENTS.md)
-all pass their local targets; 2,912 hashed captures and complete 256-entry
-semantic mappings verify. Timings are mixed and do not establish a causal
-speedup or hosted scaling PASS. User applications stayed open. Separate
-[publication approval](reviews/probes/phase1-empty-latest-read-2026-09-09/REVIEW.md#publication-approval)
-permits committing/pushing W8 and checking one resulting CI run, keeping PR #135
-Draft. Its hosted verdict remains pending; no Phase 1 exit is implied.
-Different hosted machines, local eight-worker passes and the rejected affinity
-comparison do not establish a controlled speedup or resolve these misses.
+The latest [W8 hosted packet](reviews/probes/phase1-empty-latest-read-2026-09-09/CI-EVIDENCE.md)
+passes 56 of 58 jobs, including native Linux and both actual staged
+package/adapter probes. Windows scaling still misses at `0.8953551885800882`
+against `0.75`; Linux passes at `0.7051724995962835`. Only the Windows benchmark
+and dependent Required fail. All 1,835 ordinary/diagnostic captures and complete
+256-entry semantic maps verify; integrity is not numeric PASS. The one
+authorized hosted run is complete, without a rerun or change to Draft PR #135.
+Different hosted machines and mixed local timings do not prove a causal speedup.
+
+The active scoped implementation is the
+[W9 guard and attempt-release diagnostic](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/DESIGN.md).
+Its [author and independent scoped design reviews](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/REVIEW.md)
+pass for the exact owner-frozen candidate. Its
+[instrumentation implementation](reviews/probes/phase1-guard-release-diagnostic-2026-09-09/IMPLEMENTATION.md)
+and scoped local verification pass: both platforms' ordinary/W9 releases,
+actual v1/v2/v3/v4 release children, staged packages/adapters, scoped owner tests,
+separated Clippy, xtask, launcher and structural checks, plus final format,
+documents and source/artifact binding. The record distinguishes retained
+initial-source Windows feature-off/fault evidence from final-r2-source Linux
+tests. Independent scoped source review also passes. New Cargo commands remain
+gated on host memory headroom.
+It adds nine additional bounded observation regions, distinguishes
+native admission's memory-backed verification from writable file-backend costs,
+and preserves all resource lifetimes and budgets. The owner approved publication
+and one hosted CI run with only the frozen W7-to-W9 diagnostic substitutions;
+the ordinary benchmark and Required outcome remain authoritative. Its hosted
+verdict is not yet established. It does not claim whole-store coverage, measured
+savings or Phase 1 exit; reruns and further changes require separate approval.
 Passing blocking CI evidence, permanent runtime worker/stage observations,
 allocator cost approval, and the WSL `/mnt` diagnostic disposition remain open.
 

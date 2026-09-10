@@ -981,3 +981,6 @@ mod tests {
         })
     }
 }
+
+#[cfg(feature = "audit-boundary-test-profile")]
+pub mod audit_boundary_diagnostic;

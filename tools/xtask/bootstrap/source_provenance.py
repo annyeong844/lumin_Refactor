@@ -92,8 +92,20 @@ AUDIT_LIFECYCLE_DIAGNOSTIC_COMMANDS = frozenset(
     }
 )
 
+# W9 remains an exact command/target binding, not a feature-substring exception.
+AUDIT_BOUNDARY_DIAGNOSTIC_COMMANDS = frozenset(
+    {
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-boundary-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-boundary-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-boundary-test-profile,lifecycle-test-fault", "--locked"),
+    }
+)
+
 DIAGNOSTIC_FEATURES = frozenset({
-    "audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile",
+    "audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile", "audit-boundary-test-profile",
 })
 
 
@@ -268,6 +280,7 @@ def hosted_target_name(plan: CommandPlan | None) -> str:
         (AUDIT_DIAGNOSTIC_COMMANDS, "lumin-audit-diagnostic-target"),
         (AUDIT_STORE_DIAGNOSTIC_COMMANDS, "lumin-audit-store-diagnostic-target"),
         (AUDIT_LIFECYCLE_DIAGNOSTIC_COMMANDS, "lumin-audit-lifecycle-diagnostic-target"),
+        (AUDIT_BOUNDARY_DIAGNOSTIC_COMMANDS, "lumin-audit-boundary-diagnostic-target"),
     ):
         if command in commands:
             return target

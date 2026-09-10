@@ -124,7 +124,9 @@ impl AuditLifecycleDiagnosticDto {
     }
 }
 
-pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
+pub(crate) fn project(
+    value: &AuditExecutionDiagnostic,
+) -> Result<AuditLifecycleDiagnosticDto, String> {
     let base = audit_store_diagnostic::project(value)?;
     let lifecycle_contexts = value
         .pool
@@ -167,6 +169,11 @@ pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
     // As in v1/v2, preserve a failed host observation in the raw frame; decoding
     // refuses to accept it as a completed measurement.
     dto.validate_lifecycle()?;
+    Ok(dto)
+}
+
+pub fn encode(value: &AuditExecutionDiagnostic) -> Result<String, String> {
+    let dto = project(value)?;
     let mut bytes = serde_json::to_string(&dto).map_err(|error| error.to_string())?;
     bytes.push('\n');
     Ok(bytes)
@@ -185,12 +192,12 @@ pub fn decode(bytes: &[u8]) -> Result<AuditLifecycleDiagnosticDto, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use lumin_model::audit_diagnostic::{AuditPhase, AuditPoolObservation};
     use lumin_model::audit_store_diagnostic::{AuditStorePhase, AuditStoreTimings};
 
-    fn observation() -> AuditExecutionDiagnostic {
+    pub(crate) fn observation() -> AuditExecutionDiagnostic {
         let mut pool = AuditPoolObservation {
             actual_jobs: Some(1),
             configured_worker_stack_bytes: Some(4_194_304),

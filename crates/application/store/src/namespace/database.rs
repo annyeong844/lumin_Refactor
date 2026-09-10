@@ -48,8 +48,22 @@ impl NamespaceGuard {
 
     pub(crate) fn open_database_profiled(
         &self,
-        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
             &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+        >,
+    ) -> Result<StoreDatabase<'_>, StoreError> {
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Lifecycle);
+        self.open_database_observed(
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            observer.as_mut(),
+        )
+    }
+
+    pub(crate) fn open_database_observed(
+        &self,
+        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+            &mut crate::audit_boundary_profile::DatabaseObserver<'_>,
         >,
     ) -> Result<StoreDatabase<'_>, StoreError> {
         self.require_backend_access()?;
@@ -101,11 +115,27 @@ impl NamespaceGuard {
     pub(crate) fn open_database_for_generation_profiled(
         &self,
         expected: StoreGeneration,
-        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+        #[cfg(feature = "audit-lifecycle-test-profile")] profile: Option<
             &mut crate::audit_lifecycle_profile::LifecycleProfiler,
         >,
     ) -> Result<StoreDatabase<'_>, StoreError> {
-        let database = self.open_database_profiled(
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Lifecycle);
+        self.open_database_for_generation_observed(
+            expected,
+            #[cfg(feature = "audit-lifecycle-test-profile")]
+            observer.as_mut(),
+        )
+    }
+
+    pub(crate) fn open_database_for_generation_observed(
+        &self,
+        expected: StoreGeneration,
+        #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
+            &mut crate::audit_boundary_profile::DatabaseObserver<'_>,
+        >,
+    ) -> Result<StoreDatabase<'_>, StoreError> {
+        let database = self.open_database_observed(
             #[cfg(feature = "audit-lifecycle-test-profile")]
             profile.as_deref_mut(),
         )?;
@@ -135,12 +165,24 @@ impl NamespaceGuard {
             &mut crate::audit_lifecycle_profile::LifecycleProfiler,
         >,
     ) -> Result<(), StoreError> {
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Lifecycle);
         self.commit_with_test_barrier(
             transaction,
             CommitTestBoundary::None,
             #[cfg(feature = "audit-lifecycle-test-profile")]
-            profile,
+            observer.as_mut(),
         )
+    }
+
+    #[cfg(feature = "audit-boundary-test-profile")]
+    pub(crate) fn commit_boundary(
+        &self,
+        transaction: StoreWriteTransaction<'_, '_>,
+        profile: Option<&mut crate::audit_lifecycle_profile::BoundaryProfiler>,
+    ) -> Result<(), StoreError> {
+        let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+        self.commit_with_test_barrier(transaction, CommitTestBoundary::None, observer.as_mut())
     }
 
     pub(crate) fn commit_at_namespace_test_boundary(
@@ -172,7 +214,7 @@ impl NamespaceGuard {
         transaction: StoreWriteTransaction<'_, '_>,
         test_boundary: CommitTestBoundary,
         #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
-            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+            &mut crate::audit_boundary_profile::DatabaseObserver<'_>,
         >,
     ) -> Result<(), StoreError> {
         self.require_backend_access()?;
@@ -307,6 +349,7 @@ impl<'guard> StoreDatabase<'guard> {
         })
     }
 
+    #[cfg(any(test, not(feature = "audit-boundary-test-profile")))]
     pub(crate) fn finish_attempt_session_read(
         &self,
         before_return: impl FnOnce() -> Result<(), StoreError>,
@@ -320,6 +363,21 @@ impl<'guard> StoreDatabase<'guard> {
         )
     }
 
+    #[cfg(feature = "audit-boundary-test-profile")]
+    pub(crate) fn finish_attempt_session_read_profiled(
+        &self,
+        before_return: impl FnOnce() -> Result<(), StoreError>,
+        profile: Option<&mut crate::audit_lifecycle_profile::BoundaryProfiler>,
+    ) -> Result<(), StoreError> {
+        let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Boundary);
+        self.finish_held_read(
+            before_return,
+            #[cfg(feature = "namespace-test-crash")]
+            false,
+            observer.as_mut(),
+        )
+    }
+
     pub(crate) fn finish_latest_derivation_read(
         &self,
         before_return: impl FnOnce() -> Result<(), StoreError>,
@@ -327,12 +385,14 @@ impl<'guard> StoreDatabase<'guard> {
             &mut crate::audit_lifecycle_profile::LifecycleProfiler,
         >,
     ) -> Result<(), StoreError> {
+        #[cfg(feature = "audit-lifecycle-test-profile")]
+        let mut observer = profile.map(crate::audit_boundary_profile::DatabaseObserver::Lifecycle);
         self.finish_held_read(
             before_return,
             #[cfg(feature = "namespace-test-crash")]
             true,
             #[cfg(feature = "audit-lifecycle-test-profile")]
-            profile,
+            observer.as_mut(),
         )
     }
 
@@ -341,7 +401,7 @@ impl<'guard> StoreDatabase<'guard> {
         before_return: impl FnOnce() -> Result<(), StoreError>,
         #[cfg(feature = "namespace-test-crash")] latest_read: bool,
         #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
-            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+            &mut crate::audit_boundary_profile::DatabaseObserver<'_>,
         >,
     ) -> Result<(), StoreError> {
         let result = (|| {
@@ -369,7 +429,7 @@ impl<'guard> StoreDatabase<'guard> {
         &self,
         #[cfg(feature = "namespace-test-crash")] latest_final_proof: bool,
         #[cfg(feature = "audit-lifecycle-test-profile")] mut profile: Option<
-            &mut crate::audit_lifecycle_profile::LifecycleProfiler,
+            &mut crate::audit_boundary_profile::DatabaseObserver<'_>,
         >,
     ) -> Result<(), StoreError> {
         self.guard.require_backend_access()?;

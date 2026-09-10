@@ -71,9 +71,15 @@ impl PendingAuditDiagnostic {
         ))]
         let frame =
             lumin_protocol::audit_store_diagnostic::encode(&value).map_err(io::Error::other)?;
-        #[cfg(feature = "audit-lifecycle-test-profile")]
+        #[cfg(all(
+            feature = "audit-lifecycle-test-profile",
+            not(feature = "audit-boundary-test-profile")
+        ))]
         let frame =
             lumin_protocol::audit_lifecycle_diagnostic::encode(&value).map_err(io::Error::other)?;
+        #[cfg(feature = "audit-boundary-test-profile")]
+        let frame =
+            lumin_protocol::audit_boundary_diagnostic::encode(&value).map_err(io::Error::other)?;
         stderr.write_all(frame.as_bytes())?;
         stderr.flush()
     }

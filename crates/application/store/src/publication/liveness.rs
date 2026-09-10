@@ -325,6 +325,19 @@ impl AttemptSession<'_> {
     }
 
     pub(super) fn validate(&self, guard: &NamespaceGuard) -> Result<(), StoreError> {
+        self.validate_profiled(
+            guard,
+            #[cfg(feature = "audit-boundary-test-profile")]
+            None,
+        )
+    }
+    fn validate_profiled(
+        &self,
+        guard: &NamespaceGuard,
+        #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+            &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+        >,
+    ) -> Result<(), StoreError> {
         self.require_backend_access()?;
         if self.lease.state != AttemptLeaseState::Active {
             return Err(StoreError::Integrity(format!(
@@ -332,7 +345,13 @@ impl AttemptSession<'_> {
                 self.lease.attempt_id.as_str()
             )));
         }
-        let persisted = records::read_session(guard, self.generation, &self.lease.attempt_id);
+        let persisted = records::read_session_profiled(
+            guard,
+            self.generation,
+            &self.lease.attempt_id,
+            #[cfg(feature = "audit-boundary-test-profile")]
+            profile.as_deref_mut(),
+        );
         if guard.require_backend_access().is_err() {
             self.rejected_backend_access.store(true, Ordering::Release);
         }
@@ -349,7 +368,11 @@ impl AttemptSession<'_> {
                 self.lease.attempt_id.as_str()
             ))
         })?;
-        records::validate_lock(guard, lock_file, &self.lease)
+        boundary_cost!(
+            profile,
+            AttemptLockValidation,
+            records::validate_lock(guard, lock_file, &self.lease)
+        )
     }
 
     pub(super) fn require_backend_access(&self) -> Result<(), StoreError> {
@@ -368,9 +391,45 @@ pub(super) fn release_session(
     guard: &NamespaceGuard,
     session: &mut AttemptSession<'_>,
 ) -> Result<(), StoreError> {
-    session.validate(guard)?;
-    session.lease = records::mark_releasing(guard, &session.lease)?;
-    recovery::finish_releasing(store, guard, &session.lease, session.lock_file.take())
+    release_session_profiled(
+        store,
+        guard,
+        session,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        None,
+    )
+}
+pub(super) fn release_session_profiled(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    session: &mut AttemptSession<'_>,
+    #[cfg(feature = "audit-boundary-test-profile")] mut profile: Option<
+        &mut crate::audit_lifecycle_profile::BoundaryProfiler,
+    >,
+) -> Result<(), StoreError> {
+    session.validate_profiled(
+        guard,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile.as_deref_mut(),
+    )?;
+    let releasing = records::mark_releasing_profiled(
+        guard,
+        &session.lease,
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile.as_deref_mut(),
+    );
+    if releasing.is_ok() {
+        boundary_end!(profile, DatabaseReturnTail);
+    }
+    session.lease = releasing?;
+    recovery::finish_releasing_profiled(
+        store,
+        guard,
+        &session.lease,
+        session.lock_file.take(),
+        #[cfg(feature = "audit-boundary-test-profile")]
+        profile,
+    )
 }
 
 fn require_running(

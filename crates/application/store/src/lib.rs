@@ -1,6 +1,8 @@
 #[macro_use]
 mod audit_profile;
 #[macro_use]
+mod audit_boundary_profile;
+#[macro_use]
 mod audit_lifecycle_profile;
 mod cache;
 mod gate;

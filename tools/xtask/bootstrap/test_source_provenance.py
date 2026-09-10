@@ -547,6 +547,8 @@ class HostedStoreTargetTests(HostedTargetTests):
 
 
 class HostedLifecycleTargetTests(unittest.TestCase):
+    target_name = "lumin-audit-lifecycle-diagnostic-target"
+    kind = "lifecycle"
     # Independent W7 design oracle; never copied from the guard's allowlist.
     diagnostic_commands = (
         ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
@@ -563,7 +565,7 @@ class HostedLifecycleTargetTests(unittest.TestCase):
             with self.subTest(command=command), Fixture() as fixture:
                 returncode = 101 if index == 2 else 0
                 status, errors, metadata, launch = self.invoke(
-                    fixture, command, fixture.base / "runner/lumin-audit-lifecycle-diagnostic-target",
+                    fixture, command, fixture.base / "runner" / self.target_name,
                     returncode=returncode,
                 )
                 self.assertEqual((status, errors), (returncode, ""))
@@ -574,7 +576,8 @@ class HostedLifecycleTargetTests(unittest.TestCase):
         lanes = (
             (HostedTargetTests.diagnostic_commands, "lumin-audit-diagnostic-target"),
             (HostedStoreTargetTests.diagnostic_commands, "lumin-audit-store-diagnostic-target"),
-            (self.diagnostic_commands, "lumin-audit-lifecycle-diagnostic-target"),
+            (HostedLifecycleTargetTests.diagnostic_commands, "lumin-audit-lifecycle-diagnostic-target"),
+            (HostedBoundaryTargetTests.diagnostic_commands, "lumin-audit-boundary-diagnostic-target"),
             (HostedTargetTests.ordinary_commands, "lumin-target"),
         )
         for commands, expected in lanes:
@@ -589,7 +592,7 @@ class HostedLifecycleTargetTests(unittest.TestCase):
                         launch.assert_not_called()
 
     def test_audit_unlisted_instrumentation_cannot_fall_through_to_any_target(self):
-        for feature in ("audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile"):
+        for feature in ("audit-execution-test-profile", "audit-store-test-profile", "audit-lifecycle-test-profile", "audit-boundary-test-profile"):
             selectors = (
                 ("--features", feature), ("--features=" + feature,), ("-F", feature), ("-F" + feature,),
                 ("-F=" + feature,), ("-F=lumin-cli/" + feature,),
@@ -599,7 +602,7 @@ class HostedLifecycleTargetTests(unittest.TestCase):
             )
             for selector in selectors:
                 command = ("cargo", "build", "-p", "lumin-cli", *selector, "--release", "--locked")
-                for target in ("lumin-target", "lumin-audit-diagnostic-target", "lumin-audit-store-diagnostic-target", "lumin-audit-lifecycle-diagnostic-target"):
+                for target in ("lumin-target", "lumin-audit-diagnostic-target", "lumin-audit-store-diagnostic-target", "lumin-audit-lifecycle-diagnostic-target", "lumin-audit-boundary-diagnostic-target"):
                     with self.subTest(command=command, target=target), Fixture() as fixture:
                         status, errors, metadata, launch = self.invoke(fixture, command, fixture.base / "runner" / target)
                         self.assertEqual(status, 2)
@@ -609,8 +612,8 @@ class HostedLifecycleTargetTests(unittest.TestCase):
 
     def test_audit_lifecycle_control_decoder_and_probe_commands_remain_admitted(self):
         commands = (
-            ("cargo", "run", "--locked", "-p", "lumin-xtask", "--", "benchmark", "foundation", "--diagnose-cold-audit-lifecycle"),
-            ("cargo", "test", "-p", "lumin-cli", "--test", "audit_lifecycle_diagnostic", "--features", "audit-execution-profile-probe", "--locked"),
+            ("cargo", "run", "--locked", "-p", "lumin-xtask", "--", "benchmark", "foundation", f"--diagnose-cold-audit-{self.kind}"),
+            ("cargo", "test", "-p", "lumin-cli", "--test", f"audit_{self.kind}_diagnostic", "--features", "audit-execution-profile-probe", "--locked"),
             ("cargo", "test", "--locked", "--", "audit-lifecycle-test-profile"),
             ("cargo", "metadata", "--all-features", "--locked"),
         )
@@ -622,7 +625,7 @@ class HostedLifecycleTargetTests(unittest.TestCase):
 
     def test_audit_lifecycle_redirected_target_is_rejected_before_metadata(self):
         with Fixture() as fixture:
-            target = fixture.base / "runner/lumin-audit-lifecycle-diagnostic-target"
+            target = fixture.base / "runner" / self.target_name
             target.parent.mkdir()
             destination = fixture.base / "foreign-target"
             destination.mkdir()
@@ -634,6 +637,20 @@ class HostedLifecycleTargetTests(unittest.TestCase):
             self.assertEqual(status, 2)
             metadata.assert_not_called()
             launch.assert_not_called()
+
+
+class HostedBoundaryTargetTests(HostedLifecycleTargetTests):
+    # Independent W9 source/target oracle; the negative matrix is shared, not skipped.
+    target_name = "lumin-audit-boundary-diagnostic-target"
+    kind = "boundary"
+    diagnostic_commands = (
+        ("cargo", "build", "-p", "lumin-cli", "--release", "--features",
+         "audit-boundary-test-profile", "--locked"),
+        ("cargo", "test", "-p", "lumin-model", "-p", "lumin-engine", "-p", "lumin-store", "--lib",
+         "--features", "audit-boundary-test-profile", "audit_", "--locked"),
+        ("cargo", "check", "-p", "lumin-cli", "--bin", "lumin", "--features",
+         "audit-boundary-test-profile,lifecycle-test-fault", "--locked"),
+    )
 
 
 class DependencySurfaceTests(unittest.TestCase):
