@@ -25,7 +25,7 @@ artifact `lumin-foundation-benchmark-windows-x64.json` has SHA-256
 `963fafa899e67b69c8b2d268c061109deff7552298304b82a20f00465a16f1c0`.
 This is a blocking miss, not measurement noise to discard.
 
-The [latest completed public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34344138195)
+The preceding [W8 public CI run](https://github.com/annyeong844/lumin_Refactor/actions/runs/34344138195)
 on head `12004f39127208740518d64b13c11e43b8652a34` / merge checkout
 `c373b27b5ee8f6fba5551b5fab319a4778e68643` passes 56 of 58 jobs, including
 native Linux and both staged binary/adapter probes. Windows scaling misses at
@@ -44,6 +44,17 @@ retains its independent numeric misses and then-failing test routing.
 The [earlier W4 packet](probes/phase1-windows-process-observer-2026-09-07/CI-EVIDENCE.md)
 and [invalid/missed W3 packet](probes/phase1-windows-audit-store-diagnostic-2026-09-06/CI-EVIDENCE.md)
 remain retained and are not reclassified by this measurement.
+
+The latest [W9 hosted packet](probes/phase1-guard-release-diagnostic-2026-09-09/CI-EVIDENCE.md)
+on head `90e67d5e2e4a437ac1d6178b4f992b225fb7d74e` passes both staged package
+jobs and their unchanged ordinary benchmark: reported Windows/Linux scaling
+ratios are `0.6774485114105342` and `0.5199607512575846`. W9 capture also passes
+as diagnostic-only evidence. Overall CI is **FAIL**, 47/58 successful jobs,
+because the Rust structural checker still required W7's workflow bindings.
+That omission affects core tests and five shared structural corpus rows; it is
+not a new product-test failure. The complete failure and all 1,835 hash-verified
+captures are retained. Reported numeric PASS does not supply the permanent
+runtime observations or remaining approvals below, nor prove a causal speedup.
 
 The [allocator packet](probes/phase1-musl-allocator-selection-2026-09-05/)
 proposes exact `mimalloc 0.1.52` with `v2` only for the Linux-musl CLI. It
@@ -123,8 +134,8 @@ retains both numeric misses and the separate test-routing failure. The
 [routing follow-up and integration diagnosis](probes/phase1-latest-index-noop-2026-09-07/INTEGRATION-DIAGNOSTICS.md)
 retains the two earlier hosted gate-barrier failures and the scoped diagnostic
 change. Those tests pass in the current hosted run, without establishing the
-earlier failures' cause or invalidating their evidence. The current Windows
-scaling miss still blocks acceptance.
+earlier failures' cause or invalidating their evidence. At that checkpoint the
+Windows scaling miss still blocked acceptance.
 
 The preceding bounded implementation is
 [W6 generation-bound attempt-session read](probes/phase1-attempt-session-read-2026-09-08/DESIGN.md),
@@ -215,11 +226,12 @@ owner tests, separated Clippy, xtask, launcher and structural checks, plus final
 format, documents and source/artifact binding. It distinguishes retained
 initial-source Windows feature-off/fault evidence from final-r2-source Linux
 tests. Independent scoped source review also passes. New Cargo commands remain
-gated on host memory headroom. The owner subsequently approved publication and
-one hosted CI run with the frozen W7-to-W9 diagnostic substitutions, preserving
-the ordinary benchmark and Required outcome. No hosted or numerical acceptance
-follows from the local verification; reruns and further changes require separate
-approval.
+gated on host memory headroom. The first authorized hosted run exposed the
+omitted structural-policy synchronization. The owner approved correcting that
+policy, preserving the completed failed run, then publishing one new-head CI.
+The ordinary benchmark and Required outcome remain authoritative. Local
+correction checks do not establish the new hosted verdict or close performance
+acceptance; same-head reruns and further scope changes require separate approval.
 
 ## Proposed WSL `/mnt` disposition
 

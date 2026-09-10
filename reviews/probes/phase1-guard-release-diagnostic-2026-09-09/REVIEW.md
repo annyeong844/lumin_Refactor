@@ -3,7 +3,7 @@
 Design date: 2026-09-09. Independent review date: 2026-09-10.
 Owner: [REVIEW-005](../../phase1-performance-evidence-review-2026-09-05.md).
 Candidate: [DESIGN.md](DESIGN.md).
-Status: **frozen; scoped local verification PASS; one hosted run approved; performance acceptance open**.
+Status: **frozen; structural-policy correction locally verified; next hosted verdict pending; performance acceptance open**.
 Examined source: `12004f39127208740518d64b13c11e43b8652a34`.
 Candidate SHA-256:
 `e0abf1d62c5fe5349bf621acac07d8728381d6c3c8dc236cbdd930ff2da035ca`.
@@ -116,7 +116,16 @@ Clippy, xtask, launcher and structural checks. The record distinguishes retained
 initial-source Windows feature-off/fault tests from final-r2-source Linux tests;
 it does not claim those Windows tests were rerun after the lint-only correction.
 Final format/document checks and source/artifact binding also pass. Hosted CI,
-numerical acceptance and Phase 1 exit remain unestablished.
+numerical acceptance and Phase 1 exit were not established by those local checks.
+
+The [completed hosted run](CI-EVIDENCE.md) passes both package/ordinary benchmark
+jobs and the W9 diagnostic, but overall CI fails because the separate Rust
+structural policy was not synchronized with the workflow. After this omission
+was reported, the owner answered “응응 선생님. 계속해주세요” to the explicit
+proposal to fix it, verify locally, and push a corrective commit after the
+existing CI finished, followed by one new-head CI. This is not same-head rerun,
+merge, product-change or budget-change authority. The complete failed run is
+preserved; the existing Draft remains Draft.
 
 ## Independent implementation source review
 

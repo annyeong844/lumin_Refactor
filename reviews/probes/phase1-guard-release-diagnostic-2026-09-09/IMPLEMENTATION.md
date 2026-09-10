@@ -25,12 +25,12 @@ rejection pass. Linux child-driver Clippy and all 196 applicable xtask tests pas
 Current-source v1/v2/v3 releases and all three release-child tests per version
 pass on both platforms. The Windows/Linux xtask difference is exactly two
 Windows-only cases versus one Unix-only case, with 195 shared cases and no
-ignored/filtered tests. Scoped local verification is complete, including final
-formatting, document checks and source/artifact binding. No hosted CI,
-performance or Phase 1 exit verdict is established.
-The owner subsequently approved commit/push and one hosted CI run under the
-frozen diagnostic-only replacement scope; its verdict is not established by
-these local checks. P1-60/P1-70 remain open.
+ignored/filtered tests. Scoped local instrumentation verification is complete,
+including formatting, document checks and source/artifact binding. These local
+checks preceded the authorized workflow edit. The [completed hosted run](CI-EVIDENCE.md)
+passes both package/ordinary benchmark jobs and W9 capture, but overall CI fails
+on the omitted structural-policy synchronization described below. P1-60/P1-70
+remain open; neither those local checks nor the hosted reports close Phase 1.
 
 The implementation adds the private v4 diagnostic and its strict runner decoder.
 It preserves the earlier diagnostic envelopes, ordinary product surfaces and
@@ -62,7 +62,8 @@ ten subsequent Linux build/test/lint logs, four rebuilt Windows v1/v2 logs,
 predecessor archive and executable hashes without replacing the earlier
 receipts. That receipt preserves its then-pending checks; the additional
 predecessor release children, Linux child-driver Clippy and xtask now pass.
-No Rust source changed after the independently reviewed r2 bindings.
+No instrumentation Rust source changed after the independently reviewed r2
+bindings. The later CI-policy correction below is separately scoped and checked.
 
 `final-local-verification-r1.json` binds the three preceding verification
 receipts, the final continuation logs, 17 current Windows/Linux artifacts, and
@@ -78,7 +79,54 @@ names. The ordinary benchmark, prerequisites, failed-job propagation, upload
 policy and Required block are unchanged. No Rust source or frozen design bytes
 change in this publication step, so the completed local Rust evidence remains
 applicable. No local cold benchmark or additional Cargo build is needed for the
-workflow-only wiring.
+workflow-only wiring. However, the separate Rust structural policy still named
+W7. The hosted failure shows that the earlier structural PASS did not cover
+that workflow edit; the corrective verification below does not rewrite it.
+
+## Hosted structural-policy correction
+
+The owner approved correcting `tools/xtask/src/cargo_bootstrap.rs` after the
+first hosted run exposed its stale W7 binding. The correction admits exactly
+the already-reviewed W9 workflow body, public probe, runner, five-owner feature
+closure and artifact paths. It preserves indivisible matching, every failure
+check, ordinary benchmark and isolated target. No product, workflow, manifest,
+lockfile, frozen design or budget changes accompany this correction.
+
+Both former failures and the new predecessor/feature-closure rejection tests
+pass: all **199 Windows** and **198 Linux** xtask tests, with zero ignored or
+filtered tests. The difference remains two Windows-only versus one Unix-only
+case. Windows scoped all-target Clippy passes with `-D warnings`, and the
+rebuilt Windows xtask returns STRUCTURAL PASS against the published W9 workflow.
+The isolated Python CI policy suite also passes all 12 tests.
+The affected `resolver-config-registry-artifact` public corpus row passes both
+standard and determinism, including its required architecture check; determinism
+retains one nonempty semantic capture. Final pinned `cargo fmt --all --check`
+passes without edits. Five changed/new Markdown files and 71 local link targets
+pass the path/whitespace check; new section-anchor links were source-reviewed.
+
+Raw corrective evidence is under
+`D:/lumin-w9-boundary-diagnostic-20260910/ci-policy-fix/`: `windows-xtask-r2.txt`,
+`windows-clippy-r1.txt`, `ci-policy-r1.txt`, `windows-corpus-standard-r1.txt`,
+`windows-corpus-determinism-r1.txt`, `fmt-r1.txt` and `documents-r2.txt`.
+The parent evidence directory retains `linux-xtask-r2.txt` and
+`windows-resume-architecture-r2.txt`.
+An initial PowerShell wrapper invocation rejected ambiguous `-p` before Cargo
+launched; it is not counted as an executed or passing test.
+
+The new Rust pre-write is `2026-09-10T13-47-38-586Z-01984a`; its matching
+post-write is `2026-09-10T13-52-50-071Z-471875`. Both bind intent SHA-256
+`20bbe19cebe7858cb6b4eec05b780430c762428f695d7dd6b06f496e78c7a8d7`.
+The one declared Rust file is observed, with no missing, new, removed or
+unexpected file. Its post-check SHA-256 is
+`36a68f23b684cadb73857c84a20c66ab409df8511af66fb505a8bbae2a0ba265`.
+This is lifecycle inventory evidence, not refreshed Rust semantic analysis:
+type-escape and scan/capability parity remain not applicable, and the incidental
+quick audit's JS/Python output cannot certify Rust. The 26 instrumentation
+bindings remain unchanged and do not purport to cover this additional file.
+
+The first failed CI and all of its successful package/diagnostic artifacts are
+preserved in [CI-EVIDENCE.md](CI-EVIDENCE.md). The approved next-head CI is
+separate from these local checks; no same-head rerun or automatic merge follows.
 
 ## Source boundary
 
@@ -148,7 +196,7 @@ scoped local evidence, separate from hosted CI and numerical acceptance.
 | Windows separate publication/retention fault partition | 16/16 PASS across four targets (1/2/8/5), `windows-resume-publication-r1.txt`. Four existing unused-support-function warnings remain in the feature-selected `publication` harness; its source is unchanged from HEAD. This is test PASS, not lint PASS for that partition. |
 | Windows separated Clippy partitions | Post-correction PASS with `-D warnings`: W9 owner all-targets, W9 CLI bin, ordinary workspace all-targets, external-child driver and namespace fault target. Logs: `windows-resume-boundary-owner-clippy-r1.txt`, `windows-resume-boundary-clippy-r3.txt`, `windows-resume-ordinary-clippy-r1.txt`, `windows-resume-children-clippy-r1.txt`, `windows-resume-namespace-clippy-r1.txt`. |
 | Incompatible W9/fault feature union | Exact negative vector reaches Cargo and fails with the owned incompatibility diagnostic on both platforms; `windows-resume-negative-feature-union-r1.txt` and `linux-negative-feature-union-r1.txt`. This is expected rejection, not a positive build PASS. |
-| Architecture | Windows and Linux STRUCTURAL PASS, `windows-resume-architecture-r1.txt` and `linux-architecture-direct-r1.txt`; Linux executes the already-built current-source xtask directly without Cargo. Neither command establishes the separate dependency-admission or corpus/package/benchmark verdicts. |
+| Architecture before workflow publication | Windows and Linux STRUCTURAL PASS, `windows-resume-architecture-r1.txt` and `linux-architecture-direct-r1.txt`; Linux executes the already-built current-source xtask directly without Cargo. These checks predate the W9 workflow edit and cannot establish its routing verdict. Neither command establishes separate dependency-admission or corpus/package/benchmark verdicts. |
 | Hosted wiring admission and control | Pinned isolated Python: 12 CI policy tests and 45 source-provenance tests PASS, `hosted-ci-policy-r1.txt` and `hosted-source-provenance-r1.txt`. The exact inverse W9-to-W7 workflow transformation matches the source-base workflow and the changed build block parses as PowerShell; `hosted-workflow-scope-r1.txt`. These are local wiring checks, not a hosted result. |
 | Independent resource-lifetime/failure source comparison | Scoped SOURCE PASS with no actionable P1/P2, `w9_lifetime_source_review`; exact 26-file r2 source bindings and frozen design verified. This is not binary-erasure, platform-runtime or performance certification. |
 | Matching external Rust lifecycle post-write | All three pairs complete within their inventory-only scope; all 26 current changed Rust paths bind in `source-bindings-r2.json`. See limitations below. |
@@ -185,7 +233,7 @@ new, removed or unexpected. The Rust producer is available; fuzzy name hints
 remain degraded search hints, not reuse or absence proof. This pair supersedes
 the earlier namespace binding without broadening the Rust edit scope.
 
-The 26 currently changed Rust files are covered by these three pairs and have
+The 26 instrumentation Rust files are covered by these three pairs and have
 post-write hashes recorded in `source-bindings-r2.json`. That is a separate
 local binding check, not a claim that the external tool attests those hashes.
 The tool marks Rust post-write type escapes, capability parity and scan parity
